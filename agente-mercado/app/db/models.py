@@ -108,13 +108,26 @@ class Trade(Base):
     order_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     is_simulation: Mapped[bool] = mapped_column(default=False)
 
+    # Broker integration
+    broker_trade_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    instrument: Mapped[str | None] = mapped_column(String(16), nullable=True)  # EUR_USD format
+
     # Position management (Oliver Vélez)
     scale_ins: Mapped[int] = mapped_column(Integer, default=0)
     partial_exits: Mapped[int] = mapped_column(Integer, default=0)
     original_size_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     trailing_stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     initial_stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    pattern_name: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    pattern_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Forex-specific fields
+    stop_distance_pips: Mapped[float | None] = mapped_column(Float, nullable=True)
+    risk_amount_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    risk_reward_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    timeframe_entry: Mapped[str | None] = mapped_column(String(8), nullable=True)  # "H1"
+    context_timeframe: Mapped[str | None] = mapped_column(String(8), nullable=True)  # "H4"
+    market_state_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    exit_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -146,8 +159,35 @@ class AgentState(Base):
         DateTime(timezone=True), nullable=True
     )
     consecutive_loss_days: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Broker sync fields
+    broker_balance: Mapped[float | None] = mapped_column(Float, nullable=True)
+    broker_equity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_broker_sync_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class BrokerSyncLog(Base):
+    """Log de reconciliación entre estado local y broker."""
+
+    __tablename__ = "broker_sync_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    sync_type: Mapped[str] = mapped_column(String(32))  # "manual_sync" | "trade_closed_externally" | "trade_missing_locally"
+    local_value: Mapped[str] = mapped_column(Text)
+    broker_value: Mapped[str] = mapped_column(Text)
+    discrepancy: Mapped[bool] = mapped_column(Boolean, default=False)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 

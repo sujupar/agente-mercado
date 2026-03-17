@@ -1,6 +1,6 @@
-"""Registry de estrategias — configuracion centralizada.
+"""Registry de estrategias — Oliver Vélez Forex: S1 y S2.
 
-Estrategias basadas en Oliver Vélez + Andrés Valdez (placeholder).
+Dos estrategias de pullback a EMA20 según el Plan de Trading.
 Las señales se generan por reglas técnicas, NO por LLM.
 """
 
@@ -17,153 +17,71 @@ from app.strategies.prompts import (
 
 @dataclass(frozen=True)
 class StrategyConfig:
-    """Configuracion inmutable de una estrategia."""
+    """Configuración inmutable de una estrategia Forex."""
 
     id: str
     name: str
     description: str
 
-    # Tipo de señal (patrón a detectar)
-    signal_type: str  # "elephant_bar", "ignored_bar", "sma_pullback", "custom_rules"
+    # Dirección y tipo
+    signal_type: str  # "pullback_ema20_long" | "pullback_ema20_short"
+    direction: str  # "LONG" | "SHORT"
 
-    # Risk
-    tp_min: float
-    tp_max: float
-    sl_min: float
-    sl_max: float
-    max_per_trade_pct: float
-    deviation_threshold: float
-    min_confidence: float
-    max_concurrent_positions: int
+    # Instrumentos que opera
+    instruments: tuple[str, ...] = ("EUR_USD", "GBP_USD", "USD_JPY", "XAU_USD")
+
+    # Timeframes
+    primary_timeframe: str = "H1"
+    context_timeframe: str = "H4"
+
+    # Risk (Oliver Vélez)
+    risk_per_trade_pct: float = 0.01  # 1% del balance
+    min_risk_reward: float = 2.0  # R:R mínimo 1:2
+    max_concurrent_positions: int = 3
 
     # Timing
-    cycle_interval_minutes: int
+    cycle_interval_minutes: int = 15  # Alineado a velas H1
 
-    # --- Fields with defaults below ---
+    # Estado
     enabled: bool = True
 
-    # Timeframes requeridos para detección
-    detection_timeframes: tuple[str, ...] = ("5m", "15m")
-    trend_timeframe: str = "1h"
-
-    # Pre-filter
-    min_momentum: float = 0.3
-    prefer_trending: bool = False
-
-    # LLM budget share (reducido — solo para análisis post-trade)
-    llm_budget_fraction: float = 0.25
-
-    # Capital
-    initial_capital_usd: float = 50.0
+    # Capital inicial (para demo/tracking)
+    initial_capital_usd: float = 100_000.0  # OANDA demo empieza con $100K
 
     # Learning
     trades_per_learning_report: int = 15
     trades_per_improvement_cycle: int = 20
 
-    # OHLCV
-    needs_ohlcv: bool = True  # Todas necesitan OHLCV ahora
-
-    # Prompts LLM (solo para análisis, NO para señales)
+    # LLM (solo post-trade)
+    llm_budget_fraction: float = 0.50
     learning_report_prompt: str = LEARNING_REPORT_PROMPT
     lesson_batch_prompt: str = LESSON_BATCH_PROMPT
     improvement_prompt: str = IMPROVEMENT_ANALYSIS_PROMPT
 
 
 STRATEGIES: dict[str, StrategyConfig] = {
-    "oliver_elephant": StrategyConfig(
-        id="oliver_elephant",
-        name="Oliver Vélez — Velas Elefante",
+    "s1_pullback_20_up": StrategyConfig(
+        id="s1_pullback_20_up",
+        name="S1 — Pullback EMA20 Alcista",
         description=(
-            "Detecta velas con cuerpo >=70% del rango total (alta convicción). "
-            "Entry en ruptura del extremo, stop en el extremo opuesto. "
-            "Filosofía: 'perder 1 vela, ganar 2-12 velas'."
+            "Longs en pullback a EMA20 en tendencia alcista confirmada. "
+            "Requiere 8 filtros de contexto (precio > SMA200, SMA200 UP, "
+            "EMA20 > SMA200, no trap zone, etc). Patrones: BULL_ENGULFING, "
+            "PIN_BAR_ALCISTA, GREEN_OVERPOWERS_RED. R:R mínimo 1:2."
         ),
-        signal_type="elephant_bar",
-        detection_timeframes=("5m", "15m"),
-        trend_timeframe="1h",
-        tp_min=0.02,
-        tp_max=0.06,
-        sl_min=0.005,
-        sl_max=0.015,
-        max_per_trade_pct=0.06,
-        deviation_threshold=0.01,
-        min_confidence=0.50,
-        max_concurrent_positions=15,
-        cycle_interval_minutes=5,
-        min_momentum=0.3,
-        prefer_trending=True,
-        llm_budget_fraction=0.30,
+        signal_type="pullback_ema20_long",
+        direction="LONG",
     ),
-    "oliver_sma": StrategyConfig(
-        id="oliver_sma",
-        name="Oliver Vélez — 20/200 SMA",
+    "s2_pullback_20_down": StrategyConfig(
+        id="s2_pullback_20_down",
+        name="S2 — Pullback EMA20 Bajista",
         description=(
-            "Opera pullbacks a SMA20 en tendencias establecidas (SMA20 > SMA200 "
-            "para alcista, SMA20 < SMA200 para bajista). Detecta Narrow State "
-            "(SMAs convergentes) para movimientos explosivos."
+            "Shorts en pullback a EMA20 en tendencia bajista confirmada. "
+            "Requiere 8 filtros de contexto (precio < SMA200, SMA200 DOWN, "
+            "EMA20 < SMA200, no trap zone, etc). Patrones: BEAR_ENGULFING, "
+            "PIN_BAR_BAJISTA, RED_OVERPOWERS_GREEN. R:R mínimo 1:2."
         ),
-        signal_type="sma_pullback",
-        detection_timeframes=("15m",),
-        trend_timeframe="1h",
-        tp_min=0.02,
-        tp_max=0.04,
-        sl_min=0.008,
-        sl_max=0.015,
-        max_per_trade_pct=0.06,
-        deviation_threshold=0.01,
-        min_confidence=0.50,
-        max_concurrent_positions=10,
-        cycle_interval_minutes=10,
-        min_momentum=0.5,
-        prefer_trending=True,
-        llm_budget_fraction=0.25,
-    ),
-    "oliver_ignored": StrategyConfig(
-        id="oliver_ignored",
-        name="Oliver Vélez — Barras Ignoradas",
-        description=(
-            "Detecta patrón GREEN-RED-GREEN (alcista) o RED-GREEN-RED (bajista). "
-            "La barra del medio es 'ignorada' por el mercado — el movimiento "
-            "continúa en la dirección original."
-        ),
-        signal_type="ignored_bar",
-        detection_timeframes=("5m", "15m"),
-        trend_timeframe="1h",
-        tp_min=0.015,
-        tp_max=0.04,
-        sl_min=0.005,
-        sl_max=0.015,
-        max_per_trade_pct=0.06,
-        deviation_threshold=0.01,
-        min_confidence=0.45,
-        max_concurrent_positions=15,
-        cycle_interval_minutes=5,
-        min_momentum=0.3,
-        prefer_trending=True,
-        llm_budget_fraction=0.20,
-    ),
-    "andres_valdez": StrategyConfig(
-        id="andres_valdez",
-        name="Andrés Valdez — Forex Strategy",
-        description=(
-            "Estrategia de Forex basada en la metodología de Andrés Valdez. "
-            "Configuración pendiente — las reglas se definen en Strategy.params."
-        ),
-        enabled=False,
-        signal_type="custom_rules",
-        detection_timeframes=("15m", "1h"),
-        trend_timeframe="1h",
-        tp_min=0.01,
-        tp_max=0.03,
-        sl_min=0.005,
-        sl_max=0.015,
-        max_per_trade_pct=0.06,
-        deviation_threshold=0.01,
-        min_confidence=0.50,
-        max_concurrent_positions=10,
-        cycle_interval_minutes=10,
-        min_momentum=0.3,
-        prefer_trending=False,
-        llm_budget_fraction=0.25,
+        signal_type="pullback_ema20_short",
+        direction="SHORT",
     ),
 }

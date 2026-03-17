@@ -1,40 +1,76 @@
-"""Motor de señales basado en reglas técnicas — reemplaza la generación LLM.
+"""Pipeline de señales Forex — Oliver Vélez S1/S2.
 
-Combina patrones de velas + análisis de tendencia + reglas de mejora
-para generar señales sin LLM.
+Flujo por instrumento:
+1. Fetch candles H1 (250) + H4 (100) desde OANDA
+2. Construir MarketState H1 y H4
+3. Correr 8 filtros de contexto → si alguno falla, skip
+4. Detectar pullback a EMA20
+5. Si hay pullback, buscar patrón de entrada en últimas 3 velas H1
+6. Si hay patrón, calcular stop y verificar R:R >= 2:1
+7. Aplicar filtro de improvement rules
+8. Generar señal
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
-from app.signals.candle_patterns import CandlePatternDetector, SignalCandidate
-from app.signals.trend_analysis import TrendAnalyzer
+from app.broker.models import Candle
+from app.forex.instruments import get_buffer_price
+from app.signals.context_filters import ContextFilterEngine, FilterResult
+from app.signals.entry_patterns import EntryPatternDetector, PatternResult
+from app.signals.market_state import MarketState, MarketStateAnalyzer
+from app.signals.pullback_detector import PullbackDetector, PullbackResult
 from app.strategies.registry import StrategyConfig
 
 log = logging.getLogger(__name__)
 
 
 @dataclass
+class ForexSignal:
+    """Señal de trading generada por el pipeline."""
+
+    instrument: str
+    strategy_id: str
+    direction: str  # "LONG" | "SHORT"
+    pattern_type: str
+    entry_price: float
+    stop_price: float
+    tp1_price: float
+    tp2_price: float | None
+    risk_reward_ratio: float
+    confidence: float
+
+    # Context snapshot
+    market_state_h1: MarketState
+    market_state_h4: MarketState | None
+    filter_result: FilterResult
+    pullback_result: PullbackResult
+
+    created_at: datetime = None  # type: ignore
+
+    def __post_init__(self):
+        if self.created_at is None:
+            self.created_at = datetime.now(timezone.utc)
+
+
+@dataclass
 class ImprovementRuleCheck:
-    """Representación mínima de una regla de mejora para filtrar señales."""
+    """Regla de mejora para filtrar señales (permanente e irrevocable)."""
 
     id: int
-    rule_type: str         # "time_filter", "pattern_filter", "condition_filter", "volume_filter"
+    rule_type: str
     pattern_name: str
-    condition_json: dict   # Condiciones evaluables
+    condition_json: dict
     description: str
 
 
-class RuleBasedSignalGenerator:
-    """Genera señales combinando patrones de velas + tendencia + reglas de mejora.
+class ForexSignalGenerator:
+    """Genera señales S1/S2 según el Plan de Trading de Oliver Vélez.
 
-    Flujo:
-    1. Para cada símbolo, obtener tendencia (20/200 SMA del TF mayor)
-    2. Detectar patrones en el TF de detección (5m o 15m)
-    3. Filtrar por reglas de mejora permanentes
-    4. Retornar señales aprobadas
+    Reemplaza al antiguo RuleBasedSignalGenerator.
     """
 
     def __init__(
@@ -44,228 +80,203 @@ class RuleBasedSignalGenerator:
     ) -> None:
         self._config = config
         self._rules = improvement_rules or []
-        self._pattern_detector = CandlePatternDetector()
-        self._trend_analyzer = TrendAnalyzer()
+        self._state_analyzer = MarketStateAnalyzer()
+        self._filter_engine = ContextFilterEngine()
+        self._pattern_detector = EntryPatternDetector()
+        self._pullback_detector = PullbackDetector()
 
     def generate_signals(
         self,
-        symbols_data: dict[str, dict[str, list]],
-    ) -> list[SignalCandidate]:
-        """Genera señales para todos los símbolos.
+        instruments_data: dict[str, dict[str, list[Candle]]],
+    ) -> list[ForexSignal]:
+        """Genera señales para todos los instrumentos.
 
         Args:
-            symbols_data: {
-                "BTC/USDT": {
-                    "5m": [[ts, O, H, L, C, V], ...],
-                    "15m": [...],
-                    "1h": [...],
+            instruments_data: {
+                "EUR_USD": {
+                    "H1": [Candle, ...],
+                    "H4": [Candle, ...],
                 },
                 ...
             }
 
         Returns:
-            Lista de SignalCandidate aprobadas.
+            Lista de ForexSignal aprobadas.
         """
-        signal_type = self._config.signal_type
-        all_signals: list[SignalCandidate] = []
+        direction = self._config.direction
+        all_signals: list[ForexSignal] = []
 
-        for symbol, timeframes in symbols_data.items():
-            candles_1h = timeframes.get("1h", [])
-            candles_15m = timeframes.get("15m", [])
-            candles_5m = timeframes.get("5m", [])
+        for instrument, timeframes in instruments_data.items():
+            candles_h1 = timeframes.get("H1", [])
+            candles_h4 = timeframes.get("H4", [])
 
-            # 1. Determinar tendencia con TF mayor
-            trend = self._trend_analyzer.get_trend_state(candles_1h)
-            trend_state = trend.state
+            signal = self._analyze_instrument(
+                instrument, candles_h1, candles_h4, direction,
+            )
+            if signal:
+                all_signals.append(signal)
 
-            # 2. Generar señales según el tipo de estrategia
-            candidates = self._detect_for_strategy(
-                signal_type, symbol, candles_5m, candles_15m, candles_1h, trend_state,
+        if all_signals:
+            log.info(
+                "[%s] %d señales generadas: %s",
+                self._config.id,
+                len(all_signals),
+                ", ".join(f"{s.instrument} {s.pattern_type}" for s in all_signals),
             )
 
-            # 3. Filtrar por reglas de mejora
-            for candidate in candidates:
-                if self._passes_improvement_rules(candidate):
-                    # Ajustar TP/SL a los rangos de la estrategia
-                    self._clamp_tp_sl(candidate)
-                    all_signals.append(candidate)
-                else:
-                    log.info(
-                        "[%s] Señal %s %s rechazada por regla de mejora",
-                        self._config.id, candidate.direction, candidate.symbol,
-                    )
-
-        log.info(
-            "[%s] %d señales generadas por reglas técnicas",
-            self._config.id, len(all_signals),
-        )
         return all_signals
 
-    def _detect_for_strategy(
+    def _analyze_instrument(
         self,
-        signal_type: str,
-        symbol: str,
-        candles_5m: list,
-        candles_15m: list,
-        candles_1h: list,
-        trend_state: str,
-    ) -> list[SignalCandidate]:
-        """Detecta patrones según el tipo de señal de la estrategia."""
+        instrument: str,
+        candles_h1: list[Candle],
+        candles_h4: list[Candle],
+        direction: str,
+    ) -> ForexSignal | None:
+        """Analiza un instrumento y genera señal si cumple todas las condiciones."""
 
-        if signal_type == "elephant_bar":
-            candidates = []
-            # Detectar en 5m y 15m
-            for tf_candles in [candles_5m, candles_15m]:
-                if tf_candles:
-                    result = self._pattern_detector.detect_elephant_bar(
-                        symbol, tf_candles, trend_state,
-                    )
-                    if result:
-                        candidates.append(result)
-            return candidates
+        # 1. Construir MarketState
+        state_h1 = self._state_analyzer.analyze(instrument, "H1", candles_h1)
+        if state_h1 is None:
+            return None
 
-        elif signal_type == "ignored_bar":
-            candidates = []
-            for tf_candles in [candles_5m, candles_15m]:
-                if tf_candles:
-                    result = self._pattern_detector.detect_ignored_bar(
-                        symbol, tf_candles, trend_state,
-                    )
-                    if result:
-                        candidates.append(result)
-            return candidates
+        state_h4 = None
+        if candles_h4:
+            state_h4 = self._state_analyzer.analyze(instrument, "H4", candles_h4)
 
-        elif signal_type == "sma_pullback":
-            result = self._trend_analyzer.get_sma_pullback_signal(
-                symbol, candles_1h, candles_15m,
+        # 2. Filtros de contexto (8 obligatorios)
+        filter_result = self._filter_engine.check_all_filters(state_h1, state_h4, direction)
+        if not filter_result.passed:
+            return None
+
+        # 3. Detectar pullback a EMA20
+        pullback = self._pullback_detector.detect(state_h1, direction)
+        if not pullback.is_valid:
+            return None
+
+        # 4. Buscar patrón de entrada en últimas velas H1
+        recent_candles = candles_h1[-5:]  # Últimas 5 velas para análisis
+        patterns = self._pattern_detector.detect_all(recent_candles, direction)
+        if not patterns:
+            return None
+
+        # Tomar el patrón con mayor confianza
+        best_pattern = max(patterns, key=lambda p: p.confidence)
+
+        # 5. Calcular entry, stop y TP con buffer
+        buffer = get_buffer_price(instrument)
+        signal = self._build_signal(
+            instrument, direction, best_pattern, state_h1, state_h4,
+            filter_result, pullback, buffer,
+        )
+
+        if signal is None:
+            return None
+
+        # 6. Filtrar por improvement rules
+        if not self._passes_improvement_rules(signal):
+            log.info(
+                "[%s] Señal %s %s rechazada por regla de mejora",
+                self._config.id, direction, instrument,
             )
-            if result:
-                return [SignalCandidate(
-                    symbol=result["symbol"],
-                    direction=result["direction"],
-                    pattern_name=result["pattern_name"],
-                    confidence=result["confidence"],
-                    entry_price=result["entry_price"],
-                    stop_price=result["stop_price"],
-                    tp_price=result["tp_price"],
-                    deviation_pct=abs(result["entry_price"] - result["sma20"]) / result["sma20"] * 100 if result["sma20"] > 0 else 0,
-                    rationale=result["rationale"],
-                )]
-            return []
+            return None
 
-        elif signal_type == "all_oliver":
-            # Detectar todos los patrones (para testing)
-            candidates = []
-            for tf_candles in [candles_5m, candles_15m]:
-                if tf_candles:
-                    candidates.extend(
-                        self._pattern_detector.detect_all(symbol, tf_candles, trend_state)
-                    )
-            # También SMA pullback
-            sma_result = self._trend_analyzer.get_sma_pullback_signal(
-                symbol, candles_1h, candles_15m,
+        return signal
+
+    def _build_signal(
+        self,
+        instrument: str,
+        direction: str,
+        pattern: PatternResult,
+        state_h1: MarketState,
+        state_h4: MarketState | None,
+        filter_result: FilterResult,
+        pullback: PullbackResult,
+        buffer: float,
+    ) -> ForexSignal | None:
+        """Construye la señal con cálculos de entry/stop/TP y validación R:R."""
+
+        if direction == "LONG":
+            entry = pattern.pattern_high + buffer
+            stop = pattern.pattern_low - buffer
+            stop_distance = entry - stop
+
+            if stop_distance <= 0:
+                return None
+
+            # TP1 = 2R (mínimo)
+            tp1 = entry + (stop_distance * self._config.min_risk_reward)
+            # TP2 = swing high anterior o 3R
+            tp2 = max(state_h1.last_swing_high, entry + stop_distance * 3)
+
+        else:  # SHORT
+            entry = pattern.pattern_low - buffer
+            stop = pattern.pattern_high + buffer
+            stop_distance = stop - entry
+
+            if stop_distance <= 0:
+                return None
+
+            tp1 = entry - (stop_distance * self._config.min_risk_reward)
+            tp2 = min(state_h1.last_swing_low, entry - stop_distance * 3)
+
+        # Verificar R:R
+        rr = (abs(entry - tp1)) / stop_distance if stop_distance > 0 else 0
+        if rr < self._config.min_risk_reward:
+            log.debug(
+                "R:R insuficiente para %s: %.2f (mín: %.1f)",
+                instrument, rr, self._config.min_risk_reward,
             )
-            if sma_result:
-                candidates.append(SignalCandidate(
-                    symbol=sma_result["symbol"],
-                    direction=sma_result["direction"],
-                    pattern_name=sma_result["pattern_name"],
-                    confidence=sma_result["confidence"],
-                    entry_price=sma_result["entry_price"],
-                    stop_price=sma_result["stop_price"],
-                    tp_price=sma_result["tp_price"],
-                    deviation_pct=0,
-                    rationale=sma_result["rationale"],
-                ))
-            return candidates
+            return None
 
-        elif signal_type == "custom_rules":
-            # Placeholder para Andrés Valdez — se implementa después
-            return []
+        return ForexSignal(
+            instrument=instrument,
+            strategy_id=self._config.id,
+            direction=direction,
+            pattern_type=pattern.pattern_type,
+            entry_price=entry,
+            stop_price=stop,
+            tp1_price=tp1,
+            tp2_price=tp2,
+            risk_reward_ratio=rr,
+            confidence=pattern.confidence,
+            market_state_h1=state_h1,
+            market_state_h4=state_h4,
+            filter_result=filter_result,
+            pullback_result=pullback,
+        )
 
-        else:
-            log.warning("signal_type desconocido: %s", signal_type)
-            return []
-
-    def _passes_improvement_rules(self, signal: SignalCandidate) -> bool:
-        """Verifica que la señal no viole ninguna regla de mejora permanente."""
-        from datetime import datetime, timezone
-
+    def _passes_improvement_rules(self, signal: ForexSignal) -> bool:
+        """Verifica que la señal no viole reglas de mejora permanentes."""
         for rule in self._rules:
             condition = rule.condition_json
             if not condition:
                 continue
 
-            rule_type = rule.rule_type
-
-            if rule_type == "time_filter":
+            if rule.rule_type == "time_filter":
                 forbidden_hours = condition.get("forbidden_hours", [])
                 current_hour = datetime.now(timezone.utc).hour
                 if current_hour in forbidden_hours:
-                    log.debug(
-                        "Regla #%d rechaza señal: hora %d prohibida (%s)",
-                        rule.id, current_hour, rule.description,
-                    )
                     return False
 
-            elif rule_type == "pattern_filter":
+            elif rule.rule_type == "pattern_filter":
                 forbidden_patterns = condition.get("forbidden_patterns", [])
-                if signal.pattern_name in forbidden_patterns:
-                    log.debug(
-                        "Regla #%d rechaza señal: patrón %s prohibido (%s)",
-                        rule.id, signal.pattern_name, rule.description,
-                    )
+                if signal.pattern_type in forbidden_patterns:
                     return False
 
-            elif rule_type == "volume_filter":
-                min_volume_ratio = condition.get("min_volume_ratio", 0)
-                # No podemos verificar volumen aquí — se filtra antes
-                # Este tipo se evaluará en el orchestrator
-                pass
-
-            elif rule_type == "condition_filter":
-                # Filtros genéricos
+            elif rule.rule_type == "condition_filter":
                 min_confidence = condition.get("min_confidence", 0)
                 if signal.confidence < min_confidence:
-                    log.debug(
-                        "Regla #%d rechaza señal: confianza %.2f < %.2f (%s)",
-                        rule.id, signal.confidence, min_confidence, rule.description,
-                    )
                     return False
 
-                forbidden_symbols = condition.get("forbidden_symbols", [])
-                if signal.symbol in forbidden_symbols:
+                forbidden_instruments = condition.get("forbidden_instruments", [])
+                if signal.instrument in forbidden_instruments:
                     return False
 
-                min_body_ratio = condition.get("min_body_ratio", 0)
-                # Este filtro se aplica en el detector directamente
-                pass
+            elif rule.rule_type == "session_filter":
+                forbidden_sessions = condition.get("forbidden_sessions", [])
+                from app.forex.sessions import get_current_session
+                if get_current_session() in forbidden_sessions:
+                    return False
 
         return True
-
-    def _clamp_tp_sl(self, signal: SignalCandidate) -> None:
-        """Ajusta TP/SL al rango permitido por la estrategia."""
-        config = self._config
-        price = signal.entry_price
-        if price <= 0:
-            return
-
-        if signal.direction == "BUY":
-            actual_tp_pct = (signal.tp_price - price) / price
-            actual_sl_pct = (price - signal.stop_price) / price
-        else:
-            actual_tp_pct = (price - signal.tp_price) / price
-            actual_sl_pct = (signal.stop_price - price) / price
-
-        # Clamp TP
-        tp_pct = max(config.tp_min, min(actual_tp_pct, config.tp_max))
-        # Clamp SL
-        sl_pct = max(config.sl_min, min(actual_sl_pct, config.sl_max))
-
-        # Recalcular precios
-        if signal.direction == "BUY":
-            signal.tp_price = price * (1 + tp_pct)
-            signal.stop_price = price * (1 - sl_pct)
-        else:
-            signal.tp_price = price * (1 - tp_pct)
-            signal.stop_price = price * (1 + sl_pct)

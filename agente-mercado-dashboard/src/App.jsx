@@ -9,6 +9,7 @@ import {
   ChartBarIcon,
   AcademicCapIcon,
   BeakerIcon,
+  BanknotesIcon,
 } from '@heroicons/react/24/outline';
 
 import { SimulationControls } from './components/SimulationControls';
@@ -19,6 +20,7 @@ import { SignalsPanel } from './components/Dashboard/SignalsPanel';
 import { PnLChart } from './components/Dashboard/PnLChart';
 import { LearningPage } from './components/Learning/LearningPage';
 import { StrategiesPage } from './components/Strategies/StrategiesPage';
+import { BrokerPage } from './components/Broker/BrokerPage';
 import { useAgentData } from './hooks/useAgentData';
 import { usePnLHistory } from './hooks/usePnLHistory';
 import { useSignals } from './hooks/useSignals';
@@ -32,6 +34,13 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+const TABS = [
+  { id: 'dashboard', label: 'Dashboard', icon: ChartBarIcon },
+  { id: 'strategies', label: 'Estrategias', icon: BeakerIcon },
+  { id: 'broker', label: 'Broker', icon: BanknotesIcon },
+  { id: 'learning', label: 'Aprendizaje', icon: AcademicCapIcon },
+];
 
 function SurvivalBanner({ status, reason }) {
   if (!status || status === 'CONTINUE') return null;
@@ -102,7 +111,7 @@ function DashboardContent() {
 
   if (needsAuth && agentData?.mode === 'LIVE') {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+      <div className="min-h-[100dvh] bg-gray-950 flex items-center justify-center">
         <div className="bg-gray-900/80 backdrop-blur-xl border border-gray-700/50 p-8 rounded-2xl shadow-2xl max-w-md w-full">
           <h2 className="text-2xl font-bold text-white mb-4">Login Requerido</h2>
           <p className="text-gray-400 mb-6 text-sm">
@@ -121,7 +130,7 @@ function DashboardContent() {
 
   if (loadingAgent) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+      <div className="min-h-[100dvh] bg-gray-950 flex items-center justify-center">
         <div className="text-center">
           <div className="relative w-16 h-16 mx-auto mb-4">
             <div className="absolute inset-0 rounded-full border-2 border-blue-500/20" />
@@ -135,7 +144,7 @@ function DashboardContent() {
 
   if (agentError) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+      <div className="min-h-[100dvh] bg-gray-950 flex items-center justify-center">
         <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-8 max-w-md text-center">
           <XCircleIcon className="w-12 h-12 text-red-400 mx-auto mb-3" />
           <h3 className="text-red-300 font-semibold text-lg mb-2">Error de Conexion</h3>
@@ -162,7 +171,7 @@ function DashboardContent() {
     : 'Nunca';
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100">
+    <div className="min-h-[100dvh] bg-gray-950 text-gray-100 pb-20 md:pb-0">
       {/* Ambient gradient orbs */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -right-40 w-96 h-96 bg-blue-600/8 rounded-full blur-[120px]" />
@@ -173,27 +182,27 @@ function DashboardContent() {
       {/* Header */}
       <header className="sticky top-0 z-50 bg-gray-950/80 backdrop-blur-xl border-b border-gray-800/50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
+          <div className="flex items-center justify-between h-14 md:h-16">
             <div className="flex items-center space-x-3">
-              <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20">
-                <SignalIcon className="w-5 h-5 text-white" />
+              <div className="w-8 h-8 md:w-9 md:h-9 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20">
+                <SignalIcon className="w-4 h-4 md:w-5 md:h-5 text-white" />
               </div>
               <div>
-                <h1 className="text-base font-bold text-white leading-tight">Agente de Trading</h1>
-                <p className="text-xs text-gray-500">Ultimo ciclo: {lastCycle}</p>
+                <h1 className="text-sm md:text-base font-bold text-white leading-tight">Agente de Trading</h1>
+                <p className="text-[10px] md:text-xs text-gray-500">Ultimo ciclo: {lastCycle}</p>
               </div>
             </div>
 
-            <div className="flex items-center space-x-4">
-              <div className="hidden sm:block text-right">
-                <p className="text-xs text-gray-500">Capital</p>
-                <p className="text-sm font-bold text-white">
+            <div className="flex items-center space-x-3 md:space-x-4">
+              <div className="text-right">
+                <p className="text-[10px] md:text-xs text-gray-500">Capital</p>
+                <p className="text-xs md:text-sm font-bold text-white">
                   ${agentData?.capital_usd?.toFixed(2) || '0.00'}
                 </p>
               </div>
 
               <span
-                className={`inline-flex items-center px-3 py-1 rounded-lg text-xs font-semibold ${
+                className={`inline-flex items-center px-2 md:px-3 py-1 rounded-lg text-[10px] md:text-xs font-semibold ${
                   agentData?.mode === 'LIVE'
                     ? 'bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30'
                     : agentData?.mode === 'SIMULATION'
@@ -215,88 +224,79 @@ function DashboardContent() {
         </div>
       </header>
 
-      {/* Tab Navigation */}
-      <div className="sticky top-16 z-40 bg-gray-950/90 backdrop-blur-xl border-b border-gray-800/30">
+      {/* Desktop Tab Navigation (hidden on mobile) */}
+      <div className="hidden md:block sticky top-16 z-40 bg-gray-950/90 backdrop-blur-xl border-b border-gray-800/30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <nav className="flex space-x-1 py-2">
-            <button
-              onClick={() => setActiveTab('dashboard')}
-              className={`inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                activeTab === 'dashboard'
-                  ? 'bg-blue-500/15 text-blue-400'
-                  : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'
-              }`}
-            >
-              <ChartBarIcon className="w-4 h-4 mr-1.5" />
-              Dashboard
-            </button>
-            <button
-              onClick={() => setActiveTab('strategies')}
-              className={`inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                activeTab === 'strategies'
-                  ? 'bg-blue-500/15 text-blue-400'
-                  : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'
-              }`}
-            >
-              <BeakerIcon className="w-4 h-4 mr-1.5" />
-              Estrategias
-            </button>
-            <button
-              onClick={() => setActiveTab('learning')}
-              className={`inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                activeTab === 'learning'
-                  ? 'bg-blue-500/15 text-blue-400'
-                  : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'
-              }`}
-            >
-              <AcademicCapIcon className="w-4 h-4 mr-1.5" />
-              Aprendizaje
-            </button>
+            {TABS.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id)}
+                className={`inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  activeTab === id
+                    ? 'bg-blue-500/15 text-blue-400'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'
+                }`}
+              >
+                <Icon className="w-4 h-4 mr-1.5" />
+                {label}
+              </button>
+            ))}
           </nav>
         </div>
       </div>
 
       {/* Main Content */}
-      <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 md:py-6 space-y-4 md:space-y-6">
         {activeTab === 'dashboard' && (
           <>
-            {/* Survival Banner */}
             <SurvivalBanner
               status={agentData?.survival_status}
               reason={agentData?.survival_reason}
             />
-
-            {/* Capital Breakdown - donde esta tu dinero */}
             <CapitalBreakdown agentData={agentData} />
-
-            {/* Stats Cards */}
             <StatsCards agentData={agentData} />
-
-            {/* Simulation Controls */}
             <SimulationControls agentMode={agentData?.mode} onUpdate={handleUpdate} />
-
-            {/* P&L Chart */}
             <PnLChart pnlHistory={pnlHistory} loading={loadingPnL} />
-
-            {/* Trades and Signals Grid */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-6">
               <TradesTable trades={trades} loading={loadingTrades} />
               <SignalsPanel signals={signals} loading={loadingSignals} />
             </div>
           </>
         )}
         {activeTab === 'strategies' && <StrategiesPage />}
+        {activeTab === 'broker' && <BrokerPage />}
         {activeTab === 'learning' && <LearningPage />}
       </main>
 
-      {/* Footer */}
-      <footer className="relative z-10 border-t border-gray-800/50 mt-12">
+      {/* Desktop Footer (hidden on mobile) */}
+      <footer className="hidden md:block relative z-10 border-t border-gray-800/50 mt-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <p className="text-xs text-gray-600 text-center">
-            Agente de Mercado v0.1.0 | Mercados analizados: {agentData?.markets_scanned_total?.toLocaleString() || 0}
+            Agente de Mercado v2.0.0 — Forex (OANDA) | Oliver Velez
           </p>
         </div>
       </footer>
+
+      {/* Mobile Bottom Navigation */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-gray-950/95 backdrop-blur-xl border-t border-gray-800/50 pb-[env(safe-area-inset-bottom)]">
+        <div className="flex justify-around items-center h-16">
+          {TABS.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              onClick={() => setActiveTab(id)}
+              className={`flex flex-col items-center justify-center flex-1 h-full transition-colors ${
+                activeTab === id
+                  ? 'text-blue-400'
+                  : 'text-gray-500'
+              }`}
+            >
+              <Icon className={`w-5 h-5 ${activeTab === id ? 'text-blue-400' : 'text-gray-500'}`} />
+              <span className="text-[10px] mt-1 font-medium">{label}</span>
+            </button>
+          ))}
+        </div>
+      </nav>
     </div>
   );
 }

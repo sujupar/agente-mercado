@@ -317,3 +317,85 @@ class CycleProgressOut(BaseModel):
     trades_in_cycle: int
     trades_needed: int
     status: str
+
+
+# --- Broker Schemas ---
+
+class BrokerAccountOut(BaseModel):
+    """Estado de la cuenta del broker."""
+    balance: float
+    unrealized_pnl: float
+    margin_used: float
+    margin_available: float
+    equity: float
+    open_trades: int
+    connected: bool
+
+
+class BrokerPositionOut(BaseModel):
+    """Posición abierta en el broker."""
+    trade_id: str
+    instrument: str
+    units: float
+    direction: str
+    entry_price: float
+    current_price: float
+    unrealized_pnl: float
+    stop_loss: float | None
+    take_profit: float | None
+
+
+class BrokerSyncStatusOut(BaseModel):
+    """Estado de sincronización local vs broker."""
+    last_sync_at: datetime | None
+    local_open_trades: int
+    broker_open_trades: int
+    discrepancies: list[dict]
+    is_synced: bool
+
+
+class SyncResultOut(BaseModel):
+    """Resultado de una sincronización forzada."""
+    success: bool
+    message: str
+    trades_synced: int
+    discrepancies_found: int
+
+
+# --- Market State Schemas ---
+
+class FilterStatusOut(BaseModel):
+    """Estado de un filtro de contexto."""
+    name: str
+    passed: bool
+
+
+class MarketStateOut(BaseModel):
+    """Estado del mercado para un instrumento."""
+    instrument: str
+    timeframe: str
+    timestamp: datetime | None
+    price: float
+    sma200: float
+    ema20: float
+    atr14: float
+    trend_state: str
+    price_vs_sma200: str
+    sma200_slope: str
+    ema20_slope: str
+    ma_state: str
+    ema20_vs_sma200: str
+    trap_zone: bool
+    last_swing_high: float
+    last_swing_low: float
+    impulse_range: float
+    filters_long: list[FilterStatusOut]
+    filters_short: list[FilterStatusOut]
+
+
+class AllMarketStatesOut(BaseModel):
+    """Estado del mercado para todos los instrumentos."""
+    session_active: bool
+    current_session: str | None
+    market_open: bool
+    instruments: list[MarketStateOut]

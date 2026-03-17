@@ -166,4 +166,20 @@ export const api = {
     apiClient.get(`/strategies/${strategyId}/improvement-cycles`, { params: { limit } }),
   getImprovementRules: (strategyId) =>
     apiClient.get(`/strategies/${strategyId}/improvement-rules`),
+
+  // ==========================================
+  // BROKER (OANDA)
+  // ==========================================
+
+  getBrokerAccount: () => apiClient.get('/broker/account'),
+  getBrokerPositions: () => apiClient.get('/broker/positions'),
+  getBrokerSyncStatus: () => apiClient.get('/broker/sync-status'),
+  forceBrokerSync: () => apiClient.post('/broker/sync'),
+
+  // ==========================================
+  // MARKET STATE
+  // ==========================================
+
+  getAllMarketStates: () => apiClient.get('/market-state'),
+  getMarketState: (instrument) => apiClient.get(`/market-state/${instrument}`),
 };

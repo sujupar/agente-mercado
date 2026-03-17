@@ -60,7 +60,7 @@ class PositionTracker:
                 if current_price <= 0:
                     continue
 
-                strategy_id = trade.strategy_id or "oliver_elephant"
+                strategy_id = trade.strategy_id or "s1_pullback_20_up"
 
                 # 1. Verificar partial profit (antes de TP/SL)
                 partial = self._scaler.check_partial_profit(trade, current_price)
@@ -262,7 +262,7 @@ class PositionTracker:
             trade_id=trade.id,
             symbol=trade.symbol,
             direction=trade.direction,
-            strategy_id=trade.strategy_id or "oliver_elephant",
+            strategy_id=trade.strategy_id or "s1_pullback_20_up",
             predicted_confidence=signal.confidence,
             predicted_deviation=signal.deviation_pct,
             predicted_tp_pct=signal.take_profit_pct,
@@ -324,7 +324,7 @@ class PositionTracker:
         await self._session.commit()
 
     async def _update_agent_state(
-        self, pnl: float, size_usd: float, strategy_id: str = "oliver_elephant",
+        self, pnl: float, size_usd: float, strategy_id: str = "s1_pullback_20_up",
     ) -> None:
         """Actualiza capital y estadísticas tras cerrar un trade."""
         await self._session.execute(

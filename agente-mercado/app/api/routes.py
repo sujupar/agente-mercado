@@ -15,19 +15,25 @@ from app.api.schemas import (
     AddCapitalResponse,
     AdjustmentOut,
     AgentStatus,
+    AllMarketStatesOut,
     BitacoraOut,
+    BrokerAccountOut,
+    BrokerPositionOut,
+    BrokerSyncStatusOut,
     CalibrationBucketOut,
     ConfigUpdate,
     CycleProgressOut,
     CycleResponse,
     DailyPnL,
     DirectionStatsOut,
+    FilterStatusOut,
     HealthResponse,
     ImprovementCycleOut,
     ImprovementRuleOut,
     LearningLogOut,
     LearningReportOut,
     LLMUsageResponse,
+    MarketStateOut,
     ModelComparisonOut,
     PerformanceResponse,
     PnLHistoryResponse,
@@ -35,17 +41,22 @@ from app.api.schemas import (
     SignalOut,
     StrategyOut,
     SymbolPerformanceOut,
+    SyncResultOut,
     TradeOut,
 )
+from app.broker.oanda import OANDABroker
 from app.config import settings
 from app.core.state import StateManager
 from app.db.database import get_session
-from app.db.models import AgentState, Bitacora, CostLog, ImprovementCycle, ImprovementRule, LearningLog, LearningReport, Signal, Strategy, Trade
+from app.db.models import AgentState, Bitacora, BrokerSyncLog, CostLog, ImprovementCycle, LearningLog, LearningReport, Signal, Strategy, Trade
+from app.forex.sessions import get_current_session, is_forex_market_open, is_trading_session
 from app.learning.adaptive import AdaptiveFilter
 from app.learning.improvement_engine import ImprovementEngine
 from app.learning.performance import PerformanceAnalyzer
 from app.llm.budget import LLMBudget
 from app.pnl.calculator import PnLCalculator
+from app.signals.context_filters import ContextFilterEngine
+from app.signals.market_state import MarketStateAnalyzer
 
 router = APIRouter()
 _start_time = time.monotonic()
@@ -934,3 +945,351 @@ async def get_improvement_rules(
         )
         for r in rules
     ]
+
+
+# ── Broker ─────────────────────────────────────────────────
+
+async def _get_broker() -> OANDABroker:
+    """Crea instancia del broker OANDA."""
+    return OANDABroker(
+        account_id=settings.oanda_account_id,
+        access_token=settings.oanda_access_token,
+        environment=settings.oanda_environment,
+    )
+
+
+@router.get("/broker/account", response_model=BrokerAccountOut)
+async def get_broker_account(
+    _user: str = Depends(verify_token),
+):
+    """Estado de la cuenta en OANDA (balance, equity, margen)."""
+    broker = await _get_broker()
+    try:
+        connected = await broker.is_connected()
+        if not connected:
+            return BrokerAccountOut(
+                balance=0, unrealized_pnl=0, margin_used=0,
+                margin_available=0, equity=0, open_trades=0, connected=False,
+            )
+        account = await broker.get_account()
+        positions = await broker.get_positions()
+        return BrokerAccountOut(
+            balance=account.balance,
+            unrealized_pnl=account.unrealized_pnl,
+            margin_used=account.margin_used,
+            margin_available=account.margin_available,
+            equity=account.equity,
+            open_trades=len(positions),
+            connected=True,
+        )
+    finally:
+        await broker.close()
+
+
+@router.get("/broker/positions", response_model=list[BrokerPositionOut])
+async def get_broker_positions(
+    _user: str = Depends(verify_token),
+):
+    """Posiciones abiertas en OANDA."""
+    broker = await _get_broker()
+    try:
+        positions = await broker.get_positions()
+        result = []
+        for p in positions:
+            # Obtener precio actual para calcular P&L no realizado
+            try:
+                price = await broker.get_price(p.instrument)
+                current = price.mid
+            except Exception:
+                current = p.entry_price
+
+            direction = "BUY" if p.units > 0 else "SELL"
+            pnl = (current - p.entry_price) * p.units
+
+            result.append(BrokerPositionOut(
+                trade_id=p.trade_id,
+                instrument=p.instrument,
+                units=abs(p.units),
+                direction=direction,
+                entry_price=p.entry_price,
+                current_price=current,
+                unrealized_pnl=round(pnl, 2),
+                stop_loss=p.stop_loss,
+                take_profit=p.take_profit,
+            ))
+        return result
+    finally:
+        await broker.close()
+
+
+@router.get("/broker/sync-status", response_model=BrokerSyncStatusOut)
+async def get_broker_sync_status(
+    session: AsyncSession = Depends(get_session),
+    _user: str = Depends(verify_token),
+):
+    """Comparación estado local vs broker."""
+    # Trades abiertos locales
+    result = await session.execute(
+        select(func.count(Trade.id)).where(Trade.status == "OPEN")
+    )
+    local_open = result.scalar() or 0
+
+    # Trades abiertos en broker
+    broker = await _get_broker()
+    try:
+        broker_positions = await broker.get_positions()
+        broker_open = len(broker_positions)
+    except Exception:
+        broker_open = 0
+    finally:
+        await broker.close()
+
+    # Últimas discrepancias del log
+    result = await session.execute(
+        select(BrokerSyncLog)
+        .where(BrokerSyncLog.discrepancy.is_(True))
+        .order_by(BrokerSyncLog.synced_at.desc())
+        .limit(10)
+    )
+    disc_logs = result.scalars().all()
+    discrepancies = [
+        {
+            "sync_type": d.sync_type,
+            "local_value": d.local_value,
+            "broker_value": d.broker_value,
+            "synced_at": d.synced_at.isoformat() if d.synced_at else None,
+        }
+        for d in disc_logs
+    ]
+
+    # Último sync
+    result = await session.execute(
+        select(BrokerSyncLog.synced_at)
+        .order_by(BrokerSyncLog.synced_at.desc())
+        .limit(1)
+    )
+    last_sync = result.scalar()
+
+    return BrokerSyncStatusOut(
+        last_sync_at=last_sync,
+        local_open_trades=local_open,
+        broker_open_trades=broker_open,
+        discrepancies=discrepancies,
+        is_synced=local_open == broker_open and len(discrepancies) == 0,
+    )
+
+
+@router.post("/broker/sync", response_model=SyncResultOut)
+async def force_broker_sync(
+    session: AsyncSession = Depends(get_session),
+    _user: str = Depends(verify_token),
+):
+    """Forzar reconciliación local vs broker."""
+    broker = await _get_broker()
+    try:
+        broker_positions = await broker.get_positions()
+    except Exception as e:
+        return SyncResultOut(
+            success=False, message=f"Error conectando al broker: {e}",
+            trades_synced=0, discrepancies_found=0,
+        )
+    finally:
+        await broker.close()
+
+    # Trades abiertos locales con broker_trade_id
+    result = await session.execute(
+        select(Trade).where(Trade.status == "OPEN", Trade.broker_trade_id.isnot(None))
+    )
+    local_trades = {t.broker_trade_id: t for t in result.scalars().all()}
+
+    broker_ids = {p.trade_id for p in broker_positions}
+    discrepancies = 0
+
+    # Trades locales que ya no existen en broker (cerrados externamente)
+    for btid, trade in local_trades.items():
+        if btid not in broker_ids:
+            discrepancies += 1
+            sync_log = BrokerSyncLog(
+                sync_type="trade_closed_externally",
+                local_value=f"Trade {trade.id} (OPEN)",
+                broker_value=f"Trade {btid} not found",
+                discrepancy=True,
+            )
+            session.add(sync_log)
+
+    # Trades en broker que no tenemos localmente
+    for p in broker_positions:
+        if p.trade_id not in local_trades:
+            discrepancies += 1
+            sync_log = BrokerSyncLog(
+                sync_type="trade_missing_locally",
+                local_value="not found",
+                broker_value=f"Trade {p.trade_id} ({p.instrument})",
+                discrepancy=True,
+            )
+            session.add(sync_log)
+
+    # Log de sync exitoso
+    sync_log = BrokerSyncLog(
+        sync_type="manual_sync",
+        local_value=str(len(local_trades)),
+        broker_value=str(len(broker_positions)),
+        discrepancy=discrepancies > 0,
+    )
+    session.add(sync_log)
+    await session.commit()
+
+    return SyncResultOut(
+        success=True,
+        message=f"Sync completado. {discrepancies} discrepancias encontradas.",
+        trades_synced=len(broker_positions),
+        discrepancies_found=discrepancies,
+    )
+
+
+# ── Market State ───────────────────────────────────────────
+
+@router.get("/market-state", response_model=AllMarketStatesOut)
+async def get_all_market_states(
+    _user: str = Depends(verify_token),
+):
+    """Estado del mercado para todos los instrumentos configurados."""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    market_open = is_forex_market_open(now)
+    session_info = get_current_session(now)
+    session_name = session_info.name if session_info else None
+
+    instruments_data = []
+    if market_open and settings.oanda_account_id:
+        broker = await _get_broker()
+        analyzer = MarketStateAnalyzer()
+        filter_engine = ContextFilterEngine()
+
+        try:
+            for instrument in settings.instruments_list:
+                try:
+                    candles = await broker.get_candles(instrument, "H1", 250)
+                    if len(candles) < 200:
+                        continue
+
+                    state = analyzer.analyze(instrument, "H1", candles)
+                    if not state:
+                        continue
+
+                    # Evaluar filtros para ambas direcciones
+                    filters_long = []
+                    filters_short = []
+
+                    long_result = filter_engine.check(state, state, "LONG")
+                    for f in long_result.passed:
+                        filters_long.append(FilterStatusOut(name=f, passed=True))
+                    for f in long_result.failed:
+                        filters_long.append(FilterStatusOut(name=f, passed=False))
+
+                    short_result = filter_engine.check(state, state, "SHORT")
+                    for f in short_result.passed:
+                        filters_short.append(FilterStatusOut(name=f, passed=True))
+                    for f in short_result.failed:
+                        filters_short.append(FilterStatusOut(name=f, passed=False))
+
+                    instruments_data.append(MarketStateOut(
+                        instrument=instrument,
+                        timeframe="H1",
+                        timestamp=state.timestamp,
+                        price=state.price,
+                        sma200=round(state.sma200, 5),
+                        ema20=round(state.ema20, 5),
+                        atr14=round(state.atr14, 5),
+                        trend_state=state.trend_state,
+                        price_vs_sma200=state.price_vs_sma200,
+                        sma200_slope=state.sma200_slope,
+                        ema20_slope=state.ema20_slope,
+                        ma_state=state.ma_state,
+                        ema20_vs_sma200=state.ema20_vs_sma200,
+                        trap_zone=state.trap_zone,
+                        last_swing_high=state.last_swing_high,
+                        last_swing_low=state.last_swing_low,
+                        impulse_range=round(state.impulse_range, 5),
+                        filters_long=filters_long,
+                        filters_short=filters_short,
+                    ))
+                except Exception:
+                    continue
+        finally:
+            await broker.close()
+
+    return AllMarketStatesOut(
+        session_active=is_trading_session(now),
+        current_session=session_name,
+        market_open=market_open,
+        instruments=instruments_data,
+    )
+
+
+@router.get("/market-state/{instrument}", response_model=MarketStateOut)
+async def get_market_state(
+    instrument: str,
+    _user: str = Depends(verify_token),
+):
+    """Estado del mercado detallado para un instrumento específico."""
+    from fastapi import HTTPException
+
+    if instrument not in settings.instruments_list:
+        raise HTTPException(status_code=404, detail=f"Instrumento {instrument} no configurado")
+
+    broker = await _get_broker()
+    analyzer = MarketStateAnalyzer()
+    filter_engine = ContextFilterEngine()
+
+    try:
+        candles = await broker.get_candles(instrument, "H1", 250)
+        if len(candles) < 200:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Datos insuficientes para {instrument}: {len(candles)} velas (necesita 200)",
+            )
+
+        state = analyzer.analyze(instrument, "H1", candles)
+        if not state:
+            raise HTTPException(status_code=503, detail=f"No se pudo analizar {instrument}")
+
+        filters_long = []
+        filters_short = []
+
+        long_result = filter_engine.check(state, state, "LONG")
+        for f in long_result.passed:
+            filters_long.append(FilterStatusOut(name=f, passed=True))
+        for f in long_result.failed:
+            filters_long.append(FilterStatusOut(name=f, passed=False))
+
+        short_result = filter_engine.check(state, state, "SHORT")
+        for f in short_result.passed:
+            filters_short.append(FilterStatusOut(name=f, passed=True))
+        for f in short_result.failed:
+            filters_short.append(FilterStatusOut(name=f, passed=False))
+
+        return MarketStateOut(
+            instrument=instrument,
+            timeframe="H1",
+            timestamp=state.timestamp,
+            price=state.price,
+            sma200=round(state.sma200, 5),
+            ema20=round(state.ema20, 5),
+            atr14=round(state.atr14, 5),
+            trend_state=state.trend_state,
+            price_vs_sma200=state.price_vs_sma200,
+            sma200_slope=state.sma200_slope,
+            ema20_slope=state.ema20_slope,
+            ma_state=state.ma_state,
+            ema20_vs_sma200=state.ema20_vs_sma200,
+            trap_zone=state.trap_zone,
+            last_swing_high=state.last_swing_high,
+            last_swing_low=state.last_swing_low,
+            impulse_range=round(state.impulse_range, 5),
+            filters_long=filters_long,
+            filters_short=filters_short,
+        )
+    finally:
+        await broker.close()

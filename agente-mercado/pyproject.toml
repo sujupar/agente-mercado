@@ -13,10 +13,8 @@ dependencies = [
     "alembic>=1.14.0",
     # Cache
     "redis[hiredis]>=5.2.0",
-    # HTTP client
+    # HTTP client (OANDA broker)
     "httpx>=0.28.0",
-    # Crypto exchanges
-    "ccxt>=4.4.0",
     # Scheduling
     "apscheduler>=3.10.4",
     # Configuration
