@@ -1,14 +1,10 @@
 """Pipeline de señales Forex — Oliver Vélez S1/S2.
 
-Flujo por instrumento:
-1. Fetch candles H1 (250) + H4 (100) desde OANDA
-2. Construir MarketState H1 y H4
-3. Correr 8 filtros de contexto → si alguno falla, skip
-4. Detectar pullback a EMA20
-5. Si hay pullback, buscar patrón de entrada en últimas 3 velas H1
-6. Si hay patrón, calcular stop y verificar R:R >= 2:1
-7. Aplicar filtro de improvement rules
-8. Generar señal
+Arquitectura multi-timeframe:
+- Fase 1 (cada 15 min): H1/H4 → MarketState → 8 filtros de contexto → cachear
+- Fase 2 (cada 1 min): M5 → pullback + patrón → señal → ejecución
+
+Flujo legacy (generate_signals) sigue funcionando como wrapper.
 """
 
 from __future__ import annotations
@@ -26,6 +22,18 @@ from app.signals.pullback_detector import PullbackDetector, PullbackResult
 from app.strategies.registry import StrategyConfig
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class ContextResult:
+    """Resultado de la fase 1: contexto H1/H4 aprobado para un instrumento."""
+
+    instrument: str
+    direction: str
+    market_state_h1: MarketState
+    market_state_h4: MarketState | None
+    filter_result: FilterResult
+    timestamp: datetime
 
 
 @dataclass
@@ -48,6 +56,9 @@ class ForexSignal:
     market_state_h4: MarketState | None
     filter_result: FilterResult
     pullback_result: PullbackResult
+
+    # Timeframe de entrada (H1 legacy, M5 nuevo)
+    entry_timeframe: str = "H1"
 
     created_at: datetime = None  # type: ignore
 
@@ -83,7 +94,13 @@ class ForexSignalGenerator:
         self._state_analyzer = MarketStateAnalyzer()
         self._filter_engine = ContextFilterEngine()
         self._pattern_detector = EntryPatternDetector()
+        # Pullback detector H1 (umbrales estándar)
         self._pullback_detector = PullbackDetector()
+        # Pullback detector M5 (umbrales más permisivos)
+        self._pullback_detector_m5 = PullbackDetector(
+            min_retrace_pct=config.m5_min_retrace_pct,
+            ema20_zone_atr_mult=config.m5_ema20_zone_atr_mult,
+        )
 
     def generate_signals(
         self,
@@ -125,6 +142,138 @@ class ForexSignalGenerator:
             )
 
         return all_signals
+
+    # ── Fase 1: Contexto H1/H4 ────────────────────────────────
+
+    def check_context(
+        self,
+        instruments_data: dict[str, dict[str, list[Candle]]],
+    ) -> dict[str, ContextResult]:
+        """Fase 1: Analiza H1/H4 y corre los 8 filtros de contexto.
+
+        Retorna dict de instrumentos que pasaron todos los filtros.
+        Solo se ejecuta cada 15 min.
+        """
+        direction = self._config.direction
+        results: dict[str, ContextResult] = {}
+
+        for instrument, timeframes in instruments_data.items():
+            candles_h1 = timeframes.get("H1", [])
+            candles_h4 = timeframes.get("H4", [])
+
+            # MarketState H1
+            state_h1 = self._state_analyzer.analyze(instrument, "H1", candles_h1)
+            if state_h1 is None:
+                continue
+
+            # MarketState H4
+            state_h4 = None
+            if candles_h4:
+                state_h4 = self._state_analyzer.analyze(instrument, "H4", candles_h4)
+
+            # 8 filtros de contexto
+            filter_result = self._filter_engine.check_all_filters(
+                state_h1, state_h4, direction,
+            )
+            if not filter_result.passed:
+                log.debug(
+                    "[%s] %s contexto NO pasa: %s",
+                    self._config.id, instrument,
+                    ", ".join(filter_result.failed_filters),
+                )
+                continue
+
+            log.info(
+                "[%s] %s contexto OK (%d/8 filtros)",
+                self._config.id, instrument,
+                len(filter_result.passed_filters),
+            )
+
+            results[instrument] = ContextResult(
+                instrument=instrument,
+                direction=direction,
+                market_state_h1=state_h1,
+                market_state_h4=state_h4,
+                filter_result=filter_result,
+                timestamp=datetime.now(timezone.utc),
+            )
+
+        return results
+
+    # ── Fase 2: Entradas en M5 ─────────────────────────────────
+
+    def scan_entries(
+        self,
+        context_results: dict[str, ContextResult],
+        m5_data: dict[str, list[Candle]],
+    ) -> list[ForexSignal]:
+        """Fase 2: Busca pullback + patrón en M5 para instrumentos listos.
+
+        Solo se llama para instrumentos que ya pasaron check_context().
+        Se ejecuta cada 1 min.
+
+        Args:
+            context_results: Resultado cacheado de check_context()
+            m5_data: {"EUR_USD": [Candle M5, ...], ...}
+        """
+        direction = self._config.direction
+        signals: list[ForexSignal] = []
+
+        for instrument, ctx in context_results.items():
+            candles_m5 = m5_data.get(instrument, [])
+            if not candles_m5:
+                continue
+
+            # MarketState M5 (sin SMA200)
+            state_m5 = self._state_analyzer.analyze(
+                instrument, "M5", candles_m5, require_sma200=False,
+            )
+            if state_m5 is None:
+                continue
+
+            # Pullback en M5 (umbrales permisivos)
+            pullback = self._pullback_detector_m5.detect(state_m5, direction)
+            if not pullback.is_valid:
+                continue
+
+            # Patrón de entrada en últimas 5 velas M5
+            recent_candles = candles_m5[-5:]
+            patterns = self._pattern_detector.detect_all(recent_candles, direction)
+            if not patterns:
+                continue
+
+            best_pattern = max(patterns, key=lambda p: p.confidence)
+
+            # Construir señal (usa state_h1 del contexto para swing levels)
+            buffer = get_buffer_price(instrument)
+            signal = self._build_signal(
+                instrument, direction, best_pattern,
+                ctx.market_state_h1, ctx.market_state_h4,
+                ctx.filter_result, pullback, buffer,
+            )
+            if signal is None:
+                continue
+
+            signal.entry_timeframe = "M5"
+
+            # Improvement rules
+            if not self._passes_improvement_rules(signal):
+                log.info(
+                    "[%s] Señal M5 %s %s rechazada por regla de mejora",
+                    self._config.id, direction, instrument,
+                )
+                continue
+
+            log.info(
+                "[%s] SEÑAL M5 %s %s — %s entry=%.5f stop=%.5f tp1=%.5f",
+                self._config.id, direction, instrument, best_pattern.pattern_type,
+                signal.entry_price, signal.stop_price, signal.tp1_price,
+            )
+            signals.append(signal)
+
+        return signals
+
+    # ── Legacy: análisis completo en H1 ────────────────────────
 
     def _analyze_instrument(
         self,

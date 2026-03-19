@@ -83,16 +83,25 @@ Si **cualquier** filtro falla → no se busca senal.
 - **PIN_BAR_BAJISTA**: espejo de pin bar alcista
 - **RED_OVERPOWERS_GREEN**: espejo de green overpowers red
 
-## Pipeline de Senales (por ciclo, por instrumento)
+## Pipeline de Senales — Multi-Timeframe (Oliver Velez)
 
-1. Fetch candles H1 (250) + H4 (100) desde OANDA
-2. Construir MarketState H1 y H4
-3. Correr 8 filtros de contexto → si alguno falla, skip
-4. Detectar pullback a EMA20 (retrace >= 30% impulso, |price - EMA20| <= 0.25 ATR)
-5. Si hay pullback, buscar patron de entrada en ultimas 3 velas H1
-6. Si hay patron, calcular stop y verificar R:R >= 2:1
-7. Aplicar filtro de improvement rules
-8. Generar senal → ejecutar orden en OANDA
+### Fase 1: Contexto H1/H4 (cada 15 min)
+1. Fetch candles H1 (250) + H4 (250) desde broker
+2. Construir MarketState H1 y H4 (con SMA200)
+3. Correr 8 filtros de contexto → cachear instrumentos que pasan
+4. Resultado: lista de instrumentos "listos" por estrategia
+
+### Fase 2: Entradas M5 (cada 1 min)
+1. Para instrumentos listos: Fetch candles M5 (100)
+2. Construir MarketState M5 (sin SMA200, solo EMA20 + ATR14)
+3. Detectar pullback a EMA20 (retrace >= 20% impulso, |price - EMA20| <= 0.50 ATR)
+4. Buscar patron de entrada en ultimas 5 velas M5
+5. Si hay patron, calcular stop y verificar R:R >= 2:1
+6. Aplicar filtro de improvement rules
+7. Generar senal → ejecutar orden en broker
+
+### Fase 3: Gestion de posiciones (cada 30 seg)
+- Break-even, parciales, trailing, reconciliacion con broker
 
 ## Sesiones de Trading (Forex)
 
@@ -112,7 +121,8 @@ Si **cualquier** filtro falla → no se busca senal.
 ## Capa del Broker
 
 - `app/broker/base.py`: BrokerInterface (ABC)
-- `app/broker/oanda.py`: OandaBroker (implementacion httpx)
+- `app/broker/oanda.py`: OANDABroker (implementacion httpx)
+- `app/broker/capital.py`: CapitalBroker (implementacion httpx, soporta M5)
 - `app/broker/models.py`: Candle, Price, AccountState, BrokerPosition, OrderResult
 - Cambiar de demo a live: solo cambiar URL y token en .env
 

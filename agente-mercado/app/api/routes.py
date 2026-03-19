@@ -21,6 +21,7 @@ from app.api.schemas import (
     BrokerPositionOut,
     BrokerSyncStatusOut,
     CalibrationBucketOut,
+    ChartCandleOut,
     ConfigUpdate,
     CycleProgressOut,
     CycleResponse,
@@ -42,9 +43,12 @@ from app.api.schemas import (
     StrategyOut,
     SymbolPerformanceOut,
     SyncResultOut,
+    TradeChartDataOut,
+    TradeMarkerOut,
     TradeOut,
+    TradePriceLine,
 )
-from app.broker.oanda import OANDABroker
+from app.broker.base import BrokerInterface
 from app.config import settings
 from app.core.state import StateManager
 from app.db.database import get_session
@@ -83,29 +87,43 @@ async def health_check(session: AsyncSession = Depends(get_session)):
 async def get_status(
     session: AsyncSession = Depends(get_session),
 ):
-    state_mgr = StateManager(session)
-    state = await state_mgr.ensure_state()
+    # Sumar capital de TODAS las estrategias (no de "momentum")
+    states_result = await session.execute(select(AgentState))
+    all_states = states_result.scalars().all()
+
+    total_capital = sum(s.capital_usd for s in all_states) if all_states else 0.0
+    total_peak = sum(s.peak_capital_usd for s in all_states) if all_states else 0.0
+    total_positions_open = sum(s.positions_open for s in all_states) if all_states else 0
+    total_trades_won = sum(s.trades_won for s in all_states) if all_states else 0
+    total_trades_lost = sum(s.trades_lost for s in all_states) if all_states else 0
+    total_scanned = sum(s.markets_scanned_total for s in all_states) if all_states else 0
+    total_executed = sum(s.trades_executed_total for s in all_states) if all_states else 0
+    last_cycle = max((s.last_cycle_at for s in all_states if s.last_cycle_at), default=None)
+    mode = all_states[0].mode if all_states else "SIMULATION"
+
     pnl_calc = PnLCalculator(session)
     budget = LLMBudget()
     summary = await pnl_calc.get_summary()
     llm_usage = await budget.get_usage()
     await budget.close()
 
-    # Calcular capital invertido en posiciones abiertas
+    # Capital invertido en posiciones abiertas
     positions_result = await session.execute(
         select(func.coalesce(func.sum(Trade.size_usd), 0.0))
         .where(Trade.status == "OPEN")
     )
     capital_in_positions = float(positions_result.scalar() or 0.0)
 
-    # Evaluar supervivencia "pay or die"
-    survival_check = await state_mgr.evaluate_survival()
+    # Drawdown global
+    drawdown_pct = 0.0
+    if total_peak > 0:
+        drawdown_pct = round((1 - total_capital / total_peak) * 100, 2)
 
     return AgentStatus(
-        mode=state.mode,
-        capital_usd=state.capital_usd,
-        initial_capital_usd=settings.initial_capital_usd,
-        peak_capital_usd=state.peak_capital_usd,
+        mode=mode,
+        capital_usd=total_capital,
+        initial_capital_usd=total_capital,  # Usar capital actual como referencia
+        peak_capital_usd=total_peak,
         capital_in_positions=round(capital_in_positions, 2),
         total_pnl=summary["total_pnl"],
         total_costs=summary["total_costs"],
@@ -113,17 +131,17 @@ async def get_status(
         net_7d=summary["net_7d"],
         net_14d=summary["net_14d"],
         win_rate=summary["win_rate"],
-        drawdown_pct=summary["drawdown_pct"],
-        positions_open=state.positions_open,
-        trades_won=state.trades_won,
-        trades_lost=state.trades_lost,
-        markets_scanned_total=state.markets_scanned_total,
-        trades_executed_total=state.trades_executed_total,
-        last_cycle_at=state.last_cycle_at,
+        drawdown_pct=max(drawdown_pct, 0.0),
+        positions_open=total_positions_open,
+        trades_won=total_trades_won,
+        trades_lost=total_trades_lost,
+        markets_scanned_total=total_scanned,
+        trades_executed_total=total_executed,
+        last_cycle_at=last_cycle,
         cycle_interval_minutes=settings.cycle_interval_minutes,
         llm_usage=llm_usage,
-        survival_status=survival_check.action,
-        survival_reason=survival_check.reason if survival_check.action != "CONTINUE" else None,
+        survival_status="CONTINUE",
+        survival_reason=None,
     )
 
 
@@ -677,6 +695,17 @@ async def get_strategies(
         total = (state.trades_won + state.trades_lost) if state else 0
         wr = state.trades_won / total if total > 0 else 0.0
 
+        # Cross-check: positions_open desde Trade table (fuente de verdad)
+        actual_open_result = await session.execute(
+            select(func.count(Trade.id)).where(
+                Trade.strategy_id == s.id,
+                Trade.status == "OPEN",
+            )
+        )
+        actual_open = actual_open_result.scalar() or 0
+        if state and state.positions_open != actual_open:
+            state.positions_open = actual_open
+
         # Obtener progreso del ciclo de mejora
         cycle_progress = None
         active_rules_count = 0
@@ -698,7 +727,7 @@ async def get_strategies(
             capital_usd=state.capital_usd if state else 0,
             peak_capital_usd=state.peak_capital_usd if state else 0,
             total_pnl=state.total_pnl if state else 0,
-            positions_open=state.positions_open if state else 0,
+            positions_open=actual_open,
             trades_won=state.trades_won if state else 0,
             trades_lost=state.trades_lost if state else 0,
             win_rate=round(wr, 4),
@@ -949,13 +978,24 @@ async def get_improvement_rules(
 
 # ── Broker ─────────────────────────────────────────────────
 
-async def _get_broker() -> OANDABroker:
-    """Crea instancia del broker OANDA."""
-    return OANDABroker(
-        account_id=settings.oanda_account_id,
-        access_token=settings.oanda_access_token,
-        environment=settings.oanda_environment,
-    )
+async def _get_broker() -> BrokerInterface:
+    """Crea instancia del broker según la configuración."""
+    provider = settings.broker_provider.lower()
+    if provider == 'capital':
+        from app.broker.capital import CapitalBroker
+        return CapitalBroker(
+            api_key=settings.capital_api_key,
+            identifier=settings.capital_identifier,
+            password=settings.capital_password,
+            environment=settings.capital_environment,
+        )
+    else:
+        from app.broker.oanda import OANDABroker
+        return OANDABroker(
+            account_id=settings.oanda_account_id,
+            access_token=settings.oanda_access_token,
+            environment=settings.oanda_environment,
+        )
 
 
 @router.get("/broker/account", response_model=BrokerAccountOut)
@@ -1040,6 +1080,10 @@ async def get_broker_sync_status(
         broker_positions = await broker.get_positions()
         broker_open = len(broker_positions)
     except Exception:
+        import logging
+        logging.getLogger(__name__).exception(
+            "Error obteniendo posiciones del broker en sync-status"
+        )
         broker_open = 0
     finally:
         await broker.close()
@@ -1117,14 +1161,62 @@ async def force_broker_sync(
             )
             session.add(sync_log)
 
-    # Trades en broker que no tenemos localmente
+    # Trades en broker que no tenemos localmente — ADOPTARLOS
+    trades_adopted = 0
     for p in broker_positions:
         if p.trade_id not in local_trades:
+            # Verificar que no exista ya por broker_trade_id
+            existing = await session.execute(
+                select(Trade).where(Trade.broker_trade_id == p.trade_id)
+            )
+            if existing.scalar_one_or_none():
+                continue  # Ya existe, skip
+
+            # Crear Trade local
+            strategy_id = (
+                "s1_pullback_20_up" if p.direction == "LONG"
+                else "s2_pullback_20_down"
+            )
+            direction_db = "BUY" if p.direction == "LONG" else "SELL"
+            size_usd = abs(p.units) * p.entry_price
+
+            new_trade = Trade(
+                strategy_id=strategy_id,
+                market_id=f"capital:{p.instrument}",
+                symbol=p.instrument,
+                instrument=p.instrument,
+                direction=direction_db,
+                size_usd=size_usd,
+                quantity=abs(p.units),
+                entry_price=p.entry_price,
+                stop_loss_price=p.stop_loss,
+                initial_stop_price=p.stop_loss,
+                take_profit_price=p.take_profit,
+                original_size_usd=size_usd,
+                broker_trade_id=p.trade_id,
+                status="OPEN",
+                is_simulation=False,
+                pattern_name="adopted_from_broker",
+            )
+            session.add(new_trade)
+            await session.flush()
+
+            # Actualizar AgentState
+            state_result = await session.execute(
+                select(AgentState).where(AgentState.strategy_id == strategy_id)
+            )
+            state = state_result.scalar_one_or_none()
+            if state:
+                state.positions_open += 1
+                state.trades_executed_total += 1
+                state.last_trade_at = datetime.now(timezone.utc)
+
+            trades_adopted += 1
             discrepancies += 1
             sync_log = BrokerSyncLog(
-                sync_type="trade_missing_locally",
-                local_value="not found",
-                broker_value=f"Trade {p.trade_id} ({p.instrument})",
+                sync_type="trade_adopted",
+                local_value=f"Created Trade {new_trade.id} ({strategy_id})",
+                broker_value=f"Deal {p.trade_id} ({p.instrument})",
                 discrepancy=True,
             )
             session.add(sync_log)
@@ -1158,11 +1250,10 @@ async def get_all_market_states(
 
     now = datetime.now(timezone.utc)
     market_open = is_forex_market_open(now)
-    session_info = get_current_session(now)
-    session_name = session_info.name if session_info else None
+    session_name = get_current_session(now)
 
     instruments_data = []
-    if market_open and settings.oanda_account_id:
+    if market_open:
         broker = await _get_broker()
         analyzer = MarketStateAnalyzer()
         filter_engine = ContextFilterEngine()
@@ -1182,16 +1273,16 @@ async def get_all_market_states(
                     filters_long = []
                     filters_short = []
 
-                    long_result = filter_engine.check(state, state, "LONG")
-                    for f in long_result.passed:
+                    long_result = filter_engine.check_all_filters(state, state, "LONG")
+                    for f in long_result.passed_filters:
                         filters_long.append(FilterStatusOut(name=f, passed=True))
-                    for f in long_result.failed:
+                    for f in long_result.failed_filters:
                         filters_long.append(FilterStatusOut(name=f, passed=False))
 
-                    short_result = filter_engine.check(state, state, "SHORT")
-                    for f in short_result.passed:
+                    short_result = filter_engine.check_all_filters(state, state, "SHORT")
+                    for f in short_result.passed_filters:
                         filters_short.append(FilterStatusOut(name=f, passed=True))
-                    for f in short_result.failed:
+                    for f in short_result.failed_filters:
                         filters_short.append(FilterStatusOut(name=f, passed=False))
 
                     instruments_data.append(MarketStateOut(
@@ -1258,16 +1349,16 @@ async def get_market_state(
         filters_long = []
         filters_short = []
 
-        long_result = filter_engine.check(state, state, "LONG")
-        for f in long_result.passed:
+        long_result = filter_engine.check_all_filters(state, state, "LONG")
+        for f in long_result.passed_filters:
             filters_long.append(FilterStatusOut(name=f, passed=True))
-        for f in long_result.failed:
+        for f in long_result.failed_filters:
             filters_long.append(FilterStatusOut(name=f, passed=False))
 
-        short_result = filter_engine.check(state, state, "SHORT")
-        for f in short_result.passed:
+        short_result = filter_engine.check_all_filters(state, state, "SHORT")
+        for f in short_result.passed_filters:
             filters_short.append(FilterStatusOut(name=f, passed=True))
-        for f in short_result.failed:
+        for f in short_result.failed_filters:
             filters_short.append(FilterStatusOut(name=f, passed=False))
 
         return MarketStateOut(
@@ -1293,3 +1384,159 @@ async def get_market_state(
         )
     finally:
         await broker.close()
+
+
+# ── Trade Chart Data ─────────────────────────────────────
+
+
+@router.get("/trades/{trade_id}/chart-data", response_model=TradeChartDataOut)
+async def get_trade_chart_data(
+    trade_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    """Retorna velas OHLCV + marcadores para graficar un trade."""
+    import logging
+
+    log = logging.getLogger(__name__)
+
+    result = await session.execute(select(Trade).where(Trade.id == trade_id))
+    trade = result.scalar_one_or_none()
+    if not trade:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="Trade no encontrado")
+
+    instrument = trade.instrument or trade.symbol.replace("/", "_")
+    timeframe = trade.timeframe_entry or "M5"
+
+    # Rango de tiempo: 1h antes de la entrada hasta 1h después del cierre (o ahora)
+    entry_dt = trade.created_at
+    if trade.closed_at:
+        end_dt = trade.closed_at + timedelta(hours=1)
+    else:
+        end_dt = datetime.now(timezone.utc)
+    start_dt = entry_dt - timedelta(hours=1)
+
+    # Calcular cuántas velas necesitamos según timeframe
+    tf_minutes = {"M1": 1, "M5": 5, "M15": 15, "H1": 60, "H4": 240}
+    mins = tf_minutes.get(timeframe, 5)
+    total_minutes = (end_dt - start_dt).total_seconds() / 60
+    count = min(int(total_minutes / mins) + 20, 500)
+
+    candles = []
+    try:
+        from app.broker.capital import CapitalBroker
+
+        broker_chart = CapitalBroker()
+        candles_raw = await broker_chart.get_candles(
+            instrument, timeframe, count=count, from_dt=start_dt, to_dt=end_dt
+        )
+        await broker_chart.close()
+
+        candles = [
+            ChartCandleOut(
+                time=int(c.timestamp.timestamp()),
+                open=round(c.open, 5),
+                high=round(c.high, 5),
+                low=round(c.low, 5),
+                close=round(c.close, 5),
+                volume=c.volume,
+            )
+            for c in candles_raw
+        ]
+    except Exception as e:
+        log.exception("Error obteniendo velas para chart: %s", e)
+
+    # Marcadores de entrada y salida
+    markers = []
+    entry_ts = int(entry_dt.timestamp())
+
+    if trade.direction == "BUY":
+        markers.append(
+            TradeMarkerOut(
+                time=entry_ts,
+                position="belowBar",
+                color="#22c55e",
+                shape="arrowUp",
+                text=f"BUY @ {trade.entry_price:.5f}",
+            )
+        )
+    else:
+        markers.append(
+            TradeMarkerOut(
+                time=entry_ts,
+                position="aboveBar",
+                color="#ef4444",
+                shape="arrowDown",
+                text=f"SELL @ {trade.entry_price:.5f}",
+            )
+        )
+
+    if trade.closed_at and trade.exit_price:
+        exit_ts = int(trade.closed_at.timestamp())
+        is_win = trade.pnl and trade.pnl > 0
+        markers.append(
+            TradeMarkerOut(
+                time=exit_ts,
+                position="aboveBar" if trade.direction == "BUY" else "belowBar",
+                color="#22c55e" if is_win else "#ef4444",
+                shape="circle",
+                text=f"EXIT @ {trade.exit_price:.5f}" + (f" ({trade.exit_reason})" if trade.exit_reason else ""),
+            )
+        )
+
+    # Líneas de precio (entry, SL, TP)
+    price_lines = [
+        TradePriceLine(
+            price=trade.entry_price,
+            color="#3b82f6",
+            line_style=2,
+            label="Entrada",
+        )
+    ]
+    if trade.stop_loss_price:
+        price_lines.append(
+            TradePriceLine(
+                price=trade.stop_loss_price,
+                color="#ef4444",
+                line_style=1,
+                label="Stop Loss",
+            )
+        )
+    if trade.take_profit_price:
+        price_lines.append(
+            TradePriceLine(
+                price=trade.take_profit_price,
+                color="#22c55e",
+                line_style=1,
+                label="Take Profit",
+            )
+        )
+    if trade.exit_price:
+        price_lines.append(
+            TradePriceLine(
+                price=trade.exit_price,
+                color="#f59e0b",
+                line_style=0,
+                label="Salida",
+            )
+        )
+
+    return TradeChartDataOut(
+        trade_id=trade.id,
+        symbol=trade.symbol,
+        direction=trade.direction,
+        timeframe=timeframe,
+        status=trade.status,
+        entry_price=trade.entry_price,
+        exit_price=trade.exit_price,
+        stop_loss=trade.stop_loss_price,
+        take_profit=trade.take_profit_price,
+        pnl=trade.pnl,
+        pattern_name=trade.pattern_name,
+        entry_time=entry_dt.isoformat() if entry_dt else None,
+        exit_time=trade.closed_at.isoformat() if trade.closed_at else None,
+        candles=candles,
+        markers=markers,
+        price_lines=price_lines,
+    )

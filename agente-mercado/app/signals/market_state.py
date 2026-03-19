@@ -63,15 +63,20 @@ class MarketStateAnalyzer:
         instrument: str,
         timeframe: str,
         candles: list[Candle],
+        require_sma200: bool = True,
     ) -> MarketState | None:
         """Analiza el estado del mercado para un instrumento y timeframe.
 
-        Requiere al menos 200 velas para calcular SMA200.
+        Args:
+            require_sma200: Si True (default), requiere 200 velas para SMA200.
+                Si False, solo necesita 30 velas — calcula EMA20 + ATR14 + swings
+                y llena campos SMA200 con valores neutros. Útil para M5.
         """
-        if len(candles) < 200:
+        min_candles = 200 if require_sma200 else 30
+        if len(candles) < min_candles:
             log.warning(
-                "Insuficientes velas para %s %s: %d (necesita 200)",
-                instrument, timeframe, len(candles),
+                "Insuficientes velas para %s %s: %d (necesita %d)",
+                instrument, timeframe, len(candles), min_candles,
             )
             return None
 
@@ -80,38 +85,37 @@ class MarketStateAnalyzer:
         lows = [c.low for c in candles]
 
         # Calcular indicadores
-        sma200 = self._sma(closes, 200)
         ema20 = self._ema(closes, 20)
         atr14 = self._atr(candles, 14)
 
         current_price = closes[-1]
         current_time = candles[-1].timestamp
 
-        # 1. Posición del precio vs SMA200
-        price_vs_sma200 = "ABOVE" if current_price > sma200 else "BELOW"
+        if require_sma200:
+            sma200 = self._sma(closes, 200)
+            price_vs_sma200 = "ABOVE" if current_price > sma200 else "BELOW"
+            sma200_slope = self._calculate_slope(closes, 200, lookback=10)
+            ema20_vs_sma200 = "ABOVE" if ema20 > sma200 else "BELOW"
+            ma_state = self._classify_ma_state(ema20, sma200, current_price)
+            trend_state = self._classify_trend(
+                price_vs_sma200, sma200_slope, highs, lows,
+            )
+            trap_zone = self._detect_trap_zone(closes, 20, 200)
+        else:
+            # Modo ligero (M5): sin SMA200, valores neutros
+            sma200 = 0.0
+            price_vs_sma200 = "N/A"
+            sma200_slope = "N/A"
+            ema20_vs_sma200 = "N/A"
+            ma_state = "N/A"
+            trend_state = "N/A"
+            trap_zone = False
 
-        # 2. Pendiente SMA200 (comparar con 10 velas atrás)
-        sma200_slope = self._calculate_slope(closes, 200, lookback=10)
-
-        # 3. Pendiente EMA20
+        # Pendiente EMA20 (aplica a ambos modos)
         ema20_slope = self._calculate_slope_ema(closes, 20, lookback=5)
 
-        # 4. EMA20 vs SMA200
-        ema20_vs_sma200 = "ABOVE" if ema20 > sma200 else "BELOW"
-
-        # 5. MA state (NARROW / NORMAL / WIDE)
-        ma_state = self._classify_ma_state(ema20, sma200, current_price)
-
-        # 6. Detección de swings
+        # Detección de swings
         swing_high, swing_low = self._detect_swings(highs, lows)
-
-        # 7. Tendencia
-        trend_state = self._classify_trend(
-            price_vs_sma200, sma200_slope, highs, lows,
-        )
-
-        # 8. Zona trampa
-        trap_zone = self._detect_trap_zone(closes, 20, 200)
 
         impulse_range = swing_high - swing_low if swing_high > swing_low else 0.0
 

@@ -252,18 +252,26 @@ class CapitalBroker(BrokerInterface):
         instrument: str,
         timeframe: str,
         count: int = 250,
+        from_dt: datetime | None = None,
+        to_dt: datetime | None = None,
     ) -> list[Candle]:
         epic = to_capital_epic(instrument)
         resolution = _TIMEFRAME_MAP.get(timeframe, timeframe)
 
+        params: dict = {
+            "resolution": resolution,
+            "max": min(count, 1000),
+            "pageSize": min(count, 1000),
+        }
+        if from_dt:
+            params["from"] = from_dt.strftime("%Y-%m-%dT%H:%M:%S")
+        if to_dt:
+            params["to"] = to_dt.strftime("%Y-%m-%dT%H:%M:%S")
+
         data = await self._request(
             "GET",
             f"/api/v1/prices/{epic}",
-            params={
-                "resolution": resolution,
-                "max": min(count, 1000),  # Capital.com max ~1000
-                "pageSize": min(count, 1000),
-            },
+            params=params,
         )
 
         candles = []

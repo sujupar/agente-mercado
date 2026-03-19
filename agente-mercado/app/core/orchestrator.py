@@ -27,7 +27,12 @@ from app.learning.bitacora_engine import BitacoraEngine
 from app.learning.improvement_engine import ImprovementEngine
 from app.llm.gemini import GeminiClient
 from app.notifications.telegram import TelegramNotifier
-from app.signals.rule_engine import ForexSignal, ForexSignalGenerator, ImprovementRuleCheck
+from app.signals.rule_engine import (
+    ContextResult,
+    ForexSignal,
+    ForexSignalGenerator,
+    ImprovementRuleCheck,
+)
 from app.strategies.registry import STRATEGIES
 
 log = logging.getLogger(__name__)
@@ -36,6 +41,9 @@ log = logging.getLogger(__name__)
 class ForexOrchestrator:
     """Orquesta las estrategias S1/S2 sobre pares Forex fijos vía OANDA."""
 
+    # Máximo tiempo (seg) antes de forzar refresco de contexto
+    _CONTEXT_MAX_AGE_SEC = 60 * 60  # 1 hora
+
     def __init__(self, broker: BrokerInterface) -> None:
         self._broker = broker
         self._llm = GeminiClient()
@@ -43,71 +51,171 @@ class ForexOrchestrator:
         self._instruments = settings.instruments_list
         self._cycle_count = 0
 
+        # Cache de contexto H1/H4 por estrategia
+        # {strategy_id: {instrument: ContextResult}}
+        self._context_cache: dict[str, dict[str, ContextResult]] = {}
+        self._context_updated_at: datetime | None = None
+
+    # ── Ciclo legacy (wrapper) ─────────────────────────────────
+
     async def run_cycle(self) -> None:
-        """Ciclo principal: analizar mercado → señales → trades."""
+        """Ciclo completo legacy: contexto + entradas + posiciones."""
+        await self.run_context_cycle()
+        await self.run_entry_cycle()
+
+    # ── Fase 1: Contexto H1/H4 (cada 15 min) ──────────────────
+
+    async def run_context_cycle(self) -> None:
+        """Analiza H1/H4, corre 8 filtros, cachea instrumentos listos."""
         cycle_start = datetime.now(timezone.utc)
         session_name = get_current_session()
 
         log.info(
-            "=== Ciclo Forex #%d | Sesión: %s | %s ===",
-            self._cycle_count + 1,
-            session_name,
-            cycle_start.strftime("%H:%M UTC"),
+            "=== Contexto H1/H4 | Sesión: %s | %s ===",
+            session_name, cycle_start.strftime("%H:%M UTC"),
         )
 
-        # Verificar que el mercado está abierto
         if not is_forex_market_open():
-            log.info("Mercado Forex cerrado (fin de semana) — saltando ciclo")
+            log.info("Mercado Forex cerrado — saltando contexto")
             return
 
-        # Verificar sesión de trading para nuevas entradas
-        can_open_new = is_trading_session()
+        try:
+            instruments_data = await self._fetch_all_candles()
+            if not instruments_data:
+                log.warning("Sin datos de candles — saltando contexto")
+                return
+
+            log.info(
+                "Contexto: datos para %d instrumentos: %s",
+                len(instruments_data), ", ".join(instruments_data.keys()),
+            )
+
+            # Correr filtros para cada estrategia
+            async with async_session_factory() as session:
+                for strategy_id, config in STRATEGIES.items():
+                    if not config.enabled:
+                        continue
+
+                    improvement_rules = await self._load_improvement_rules(
+                        session, strategy_id,
+                    )
+                    generator = ForexSignalGenerator(config, improvement_rules)
+                    context_results = generator.check_context(instruments_data)
+
+                    self._context_cache[strategy_id] = context_results
+
+                    ready = list(context_results.keys())
+                    log.info(
+                        "[%s] Contexto: %d/%d instrumentos listos%s",
+                        strategy_id, len(ready), len(instruments_data),
+                        f" ({', '.join(ready)})" if ready else "",
+                    )
+
+                self._context_updated_at = datetime.now(timezone.utc)
+
+            elapsed = (datetime.now(timezone.utc) - cycle_start).total_seconds()
+            log.info("=== Contexto completado en %.1fs ===", elapsed)
+
+        except Exception:
+            log.exception("Error en ciclo de contexto")
+
+    # ── Fase 2: Entradas M5 (cada 1 min) ──────────────────────
+
+    async def run_entry_cycle(self) -> None:
+        """Busca entradas en M5 para instrumentos que pasaron contexto."""
+        cycle_start = datetime.now(timezone.utc)
+
+        if not is_forex_market_open():
+            return
+
+        if not is_trading_session():
+            log.debug("Fuera de sesión de trading — solo gestión de posiciones")
+            # Gestionar posiciones incluso fuera de sesión
+            try:
+                async with async_session_factory() as session:
+                    await self._manage_positions(session)
+                    await session.commit()
+            except Exception:
+                log.exception("Error gestionando posiciones")
+            return
+
+        # Si no hay cache o es muy viejo, refrescar contexto primero
+        if self._context_needs_refresh():
+            log.info("Cache de contexto vacío/expirado — refrescando...")
+            await self.run_context_cycle()
 
         try:
             async with async_session_factory() as session:
-                # FASE 1: Fetch candles de todos los instrumentos
-                instruments_data = await self._fetch_all_candles()
-
-                if not instruments_data:
-                    log.warning("Sin datos de candles — saltando ciclo")
-                    return
-
-                log.info(
-                    "Datos obtenidos para %d instrumentos: %s",
-                    len(instruments_data),
-                    ", ".join(instruments_data.keys()),
-                )
-
-                # FASE 2: Gestionar posiciones abiertas (siempre, incluso fuera de sesión)
+                # Gestionar posiciones abiertas
                 await self._manage_positions(session)
 
-                # FASE 3: Buscar nuevas señales (solo durante sesión de trading)
-                if can_open_new:
-                    await self._scan_for_signals(session, instruments_data)
-                else:
-                    log.info("Fuera de sesión de trading — solo gestión de posiciones")
+                # Buscar entradas M5 para cada estrategia
+                total_trades = 0
+                for strategy_id, config in STRATEGIES.items():
+                    if not config.enabled:
+                        continue
+
+                    context = self._context_cache.get(strategy_id, {})
+                    if not context:
+                        continue
+
+                    # Fetch M5 solo para instrumentos listos
+                    ready_instruments = list(context.keys())
+                    m5_data = await self._fetch_entry_candles(ready_instruments)
+
+                    if not m5_data:
+                        continue
+
+                    # Generar señales M5
+                    improvement_rules = await self._load_improvement_rules(
+                        session, strategy_id,
+                    )
+                    generator = ForexSignalGenerator(config, improvement_rules)
+                    signals = generator.scan_entries(context, m5_data)
+
+                    for signal in signals:
+                        traded = await self._execute_signal(session, signal, strategy_id)
+                        if traded:
+                            total_trades += 1
+
+                    # Check learning
+                    improvement_engine = ImprovementEngine(session)
+                    await self._check_learning(session, strategy_id, improvement_engine)
+
+                # Actualizar AgentState
+                for strategy_id in STRATEGIES:
+                    state = await self._ensure_state(session, strategy_id)
+                    state.last_cycle_at = datetime.now(timezone.utc)
 
                 await session.commit()
 
+                if total_trades > 0:
+                    log.info("Total trades ejecutados este ciclo: %d", total_trades)
+
             elapsed = (datetime.now(timezone.utc) - cycle_start).total_seconds()
-            log.info(
-                "=== Ciclo Forex completado en %.1fs | Sesión: %s ===",
-                elapsed, session_name,
-            )
+            if elapsed > 5:
+                log.info("Ciclo de entrada completado en %.1fs", elapsed)
 
         except Exception:
-            log.exception("Error fatal en ciclo Forex")
+            log.exception("Error en ciclo de entrada M5")
 
         self._cycle_count += 1
 
+    def _context_needs_refresh(self) -> bool:
+        """True si el cache de contexto está vacío o expirado."""
+        if not self._context_cache or self._context_updated_at is None:
+            return True
+        age = (datetime.now(timezone.utc) - self._context_updated_at).total_seconds()
+        return age > self._CONTEXT_MAX_AGE_SEC
+
     async def _fetch_all_candles(self) -> dict[str, dict[str, list[Candle]]]:
-        """Fetch candles H1 y H4 para todos los instrumentos."""
+        """Fetch candles H1 y H4 para todos los instrumentos (contexto)."""
         result: dict[str, dict[str, list[Candle]]] = {}
 
         for instrument in self._instruments:
             try:
                 candles_h1 = await self._broker.get_candles(instrument, "H1", 250)
-                candles_h4 = await self._broker.get_candles(instrument, "H4", 100)
+                candles_h4 = await self._broker.get_candles(instrument, "H4", 250)
 
                 if candles_h1:
                     result[instrument] = {
@@ -118,6 +226,39 @@ class ForexOrchestrator:
                 log.exception("Error fetching candles para %s", instrument)
 
         return result
+
+    async def _fetch_entry_candles(
+        self, instruments: list[str],
+    ) -> dict[str, list[Candle]]:
+        """Fetch candles M5 solo para instrumentos que pasaron contexto."""
+        result: dict[str, list[Candle]] = {}
+
+        for instrument in instruments:
+            try:
+                candles = await self._broker.get_candles(instrument, "M5", 100)
+                if candles:
+                    result[instrument] = candles
+            except Exception:
+                log.exception("Error fetching M5 para %s", instrument)
+
+        return result
+
+    async def _load_improvement_rules(
+        self, session: AsyncSession, strategy_id: str,
+    ) -> list[ImprovementRuleCheck]:
+        """Carga las improvement rules activas para una estrategia."""
+        improvement_engine = ImprovementEngine(session)
+        active_rules = await improvement_engine.get_active_rules(strategy_id)
+        return [
+            ImprovementRuleCheck(
+                id=r.id,
+                rule_type=r.rule_type,
+                pattern_name=r.pattern_name,
+                condition_json=r.condition_json or {},
+                description=r.description,
+            )
+            for r in active_rules
+        ]
 
     async def _scan_for_signals(
         self,
@@ -247,7 +388,7 @@ class ForexOrchestrator:
             llm_model=f"rule:{signal.pattern_type}",
             llm_prompt_hash="",
             llm_response_summary=f"Patrón {signal.pattern_type} en {signal.instrument}",
-            data_sources_used=["oanda_h1", "oanda_h4", signal.pattern_type],
+            data_sources_used=["oanda_h1", "oanda_h4", f"oanda_{signal.entry_timeframe.lower()}", signal.pattern_type],
         )
         session.add(db_signal)
         await session.flush()
@@ -273,7 +414,7 @@ class ForexOrchestrator:
             risk_amount_usd=risk_amount,
             risk_reward_ratio=signal.risk_reward_ratio,
             stop_distance_pips=stop_distance,
-            timeframe_entry="H1",
+            timeframe_entry=signal.entry_timeframe,
             context_timeframe="H4",
             market_state_json=signal.market_state_h1.to_dict(),
             status="OPEN",
@@ -364,10 +505,10 @@ class ForexOrchestrator:
         # Para posiciones abiertas: gestionar break-even y trailing
         for position in broker_positions:
             if position.trade_id not in db_trades:
-                log.warning(
-                    "Posición %s en broker sin trade en DB — ignorando",
-                    position.trade_id,
-                )
+                # Adoptar posición huérfana del broker
+                db_trade = await self._adopt_broker_position(session, position)
+                if db_trade:
+                    await self._manage_single_position(session, db_trade, position)
                 continue
 
             db_trade = db_trades[position.trade_id]
@@ -408,20 +549,130 @@ class ForexOrchestrator:
                     )
 
     async def _sync_closed_trade(self, session: AsyncSession, trade: Trade) -> None:
-        """Sincroniza un trade que fue cerrado en el broker."""
+        """Sincroniza un trade que fue cerrado en el broker — calcula P&L."""
         trade.status = "CLOSED"
         trade.closed_at = datetime.now(timezone.utc)
 
-        # Intentar obtener info del trade cerrado
-        # (El P&L real viene del broker en la reconciliación diaria)
-        log.info(
-            "[%s] Trade %s %s cerrado por broker (TP/SL hit)",
-            trade.strategy_id, trade.direction, trade.instrument,
-        )
+        # Obtener precio actual para estimar exit_price
+        try:
+            price = await self._broker.get_price(trade.instrument)
+            exit_price = price.mid
+        except Exception:
+            # Fallback: usar stop_loss o take_profit como estimación
+            exit_price = trade.stop_loss_price or trade.entry_price
+
+        trade.exit_price = exit_price
+
+        # Calcular P&L
+        if trade.direction == "BUY":
+            pnl_raw = (exit_price - trade.entry_price) * trade.quantity
+        else:  # SELL
+            pnl_raw = (trade.entry_price - exit_price) * trade.quantity
+
+        # Convertir de JPY a USD para pares con JPY como quote
+        if trade.instrument and ("_JPY" in trade.instrument or "JPY" in trade.instrument):
+            pnl_raw = pnl_raw / exit_price
+
+        trade.pnl = pnl_raw
+
+        # Determinar exit_reason por el precio de salida
+        if trade.take_profit_price and trade.direction == "BUY" and exit_price >= trade.take_profit_price:
+            trade.exit_reason = "TP"
+        elif trade.take_profit_price and trade.direction == "SELL" and exit_price <= trade.take_profit_price:
+            trade.exit_reason = "TP"
+        elif trade.stop_loss_price and trade.direction == "BUY" and exit_price <= trade.stop_loss_price:
+            trade.exit_reason = "SL"
+        elif trade.stop_loss_price and trade.direction == "SELL" and exit_price >= trade.stop_loss_price:
+            trade.exit_reason = "SL"
+        else:
+            trade.exit_reason = "BROKER"
 
         # Actualizar AgentState
         state = await self._ensure_state(session, trade.strategy_id)
         state.positions_open = max(0, state.positions_open - 1)
+        state.total_pnl += trade.pnl or 0
+        state.capital_usd += trade.pnl or 0
+
+        if (trade.pnl or 0) >= 0:
+            state.trades_won += 1
+        else:
+            state.trades_lost += 1
+
+        # Actualizar peak capital
+        if state.capital_usd > state.peak_capital_usd:
+            state.peak_capital_usd = state.capital_usd
+
+        # Registrar en ciclo de mejora
+        try:
+            improvement_engine = ImprovementEngine(session)
+            cycle_ready = await improvement_engine.record_trade(trade)
+            if cycle_ready:
+                log.info(
+                    "[%s] Ciclo de mejora listo para análisis",
+                    trade.strategy_id,
+                )
+        except Exception:
+            log.exception("[%s] Error registrando trade en ciclo de mejora", trade.strategy_id)
+
+        log.info(
+            "[%s] Trade %s %s cerrado: exit=%.5f pnl=%.2f reason=%s",
+            trade.strategy_id, trade.direction, trade.instrument,
+            exit_price, trade.pnl or 0, trade.exit_reason,
+        )
+
+    async def _adopt_broker_position(
+        self, session: AsyncSession, position,
+    ) -> Trade | None:
+        """Crea un Trade local para una posición del broker sin registro en DB."""
+        # Verificar que no exista ya (protección contra duplicados)
+        result = await session.execute(
+            select(Trade).where(Trade.broker_trade_id == position.trade_id)
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            return existing
+
+        # Determinar estrategia por dirección
+        strategy_id = (
+            "s1_pullback_20_up" if position.direction == "LONG"
+            else "s2_pullback_20_down"
+        )
+        direction_db = "BUY" if position.direction == "LONG" else "SELL"
+        size_usd = abs(position.units) * position.entry_price
+
+        trade = Trade(
+            strategy_id=strategy_id,
+            market_id=f"capital:{position.instrument}",
+            symbol=position.instrument,
+            instrument=position.instrument,
+            direction=direction_db,
+            size_usd=size_usd,
+            quantity=abs(position.units),
+            entry_price=position.entry_price,
+            stop_loss_price=position.stop_loss,
+            initial_stop_price=position.stop_loss,
+            take_profit_price=position.take_profit,
+            original_size_usd=size_usd,
+            broker_trade_id=position.trade_id,
+            status="OPEN",
+            is_simulation=False,
+            pattern_name="adopted_from_broker",
+        )
+        session.add(trade)
+        await session.flush()
+
+        # Actualizar AgentState
+        state = await self._ensure_state(session, strategy_id)
+        state.positions_open += 1
+        state.trades_executed_total += 1
+        state.last_trade_at = datetime.now(timezone.utc)
+
+        log.info(
+            "[%s] Posición adoptada del broker: %s %s (deal=%s, entry=%.5f)",
+            strategy_id, position.direction, position.instrument,
+            position.trade_id, position.entry_price,
+        )
+        return trade
 
     async def _check_learning(
         self,

@@ -28,9 +28,20 @@ class PullbackDetector:
     """Detecta pullbacks a la EMA20 según las reglas del Plan de Trading.
 
     Condiciones para pullback válido:
-    1. Retroceso >= 30% del rango del impulso (swing_high - swing_low)
-    2. Precio dentro de ±0.25 ATR de la EMA20
+    1. Retroceso >= min_retrace_pct del rango del impulso
+    2. Precio dentro de ±ema20_zone_atr_mult * ATR de la EMA20
+
+    Umbrales por defecto (H1): 30% retrace, 0.25 ATR zone.
+    Para M5: 20% retrace, 0.50 ATR zone (pullbacks más pequeños).
     """
+
+    def __init__(
+        self,
+        min_retrace_pct: float = MIN_RETRACE_PCT,
+        ema20_zone_atr_mult: float = EMA20_ZONE_ATR_MULT,
+    ):
+        self._min_retrace_pct = min_retrace_pct
+        self._ema20_zone_atr_mult = ema20_zone_atr_mult
 
     def detect(
         self,
@@ -75,9 +86,9 @@ class PullbackDetector:
         distance_to_ema20 = abs(price - ema20)
         distance_to_ema20_atr = distance_to_ema20 / atr
 
-        # Verificar condiciones
-        retrace_valid = retrace_pct >= MIN_RETRACE_PCT
-        in_ema20_zone = distance_to_ema20_atr <= EMA20_ZONE_ATR_MULT
+        # Verificar condiciones (usa umbrales de instancia)
+        retrace_valid = retrace_pct >= self._min_retrace_pct
+        in_ema20_zone = distance_to_ema20_atr <= self._ema20_zone_atr_mult
 
         is_valid = retrace_valid and in_ema20_zone
 

@@ -4,10 +4,12 @@ import {
   ArrowLeftIcon,
   BookOpenIcon,
   ChartBarIcon,
+  ChartBarSquareIcon,
   ClipboardDocumentListIcon,
   AcademicCapIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
+import { TradeChart } from '../TradeChart';
 import {
   useStrategyTrades,
   useStrategyBitacora,
@@ -35,55 +37,64 @@ function DetailTab({ label, icon: Icon, active, onClick }) {
 
 function TradesSection({ strategyId }) {
   const { data: trades, isLoading } = useStrategyTrades(strategyId);
+  const [chartTradeId, setChartTradeId] = useState(null);
 
   if (isLoading) return <LoadingSpinner />;
   if (!trades?.length) return <EmptyState text="Sin trades todavia" />;
 
   return (
-    <div className="space-y-2">
-      {trades.map((t) => (
-        <div
-          key={t.id}
-          className="bg-gray-900/50 rounded-xl border border-gray-700/30 p-3"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <span
-                className={`px-1.5 py-0.5 rounded text-xs font-bold ${
-                  t.direction === 'BUY'
-                    ? 'bg-emerald-500/20 text-emerald-400'
-                    : 'bg-red-500/20 text-red-400'
-                }`}
-              >
-                {t.direction}
-              </span>
-              <span className="text-sm font-medium text-white">{t.symbol}</span>
+    <>
+      <div className="space-y-2">
+        {trades.map((t) => (
+          <div
+            key={t.id}
+            className="bg-gray-900/50 rounded-xl border border-gray-700/30 p-3 cursor-pointer hover:border-blue-500/30 transition-colors"
+            onClick={() => setChartTradeId(t.id)}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <span
+                  className={`px-1.5 py-0.5 rounded text-xs font-bold ${
+                    t.direction === 'BUY'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : 'bg-red-500/20 text-red-400'
+                  }`}
+                >
+                  {t.direction}
+                </span>
+                <span className="text-sm font-medium text-white">{t.symbol}</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <span
+                  className={`text-sm font-bold ${
+                    t.pnl > 0 ? 'text-emerald-400' : t.pnl < 0 ? 'text-red-400' : 'text-gray-400'
+                  }`}
+                >
+                  {t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(4)}` : '-'}
+                </span>
+                <ChartBarSquareIcon className="w-4 h-4 text-gray-500" />
+              </div>
             </div>
-            <div className="text-right">
-              <span
-                className={`text-sm font-bold ${
-                  t.pnl > 0 ? 'text-emerald-400' : t.pnl < 0 ? 'text-red-400' : 'text-gray-400'
-                }`}
-              >
-                {t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(4)}` : '-'}
+            <div className="flex items-center justify-between mt-1.5 text-xs text-gray-500">
+              <span>Size: ${t.size_usd?.toFixed(2)}</span>
+              <span>
+                {t.status === 'OPEN' ? (
+                  <span className="text-blue-400">Abierta</span>
+                ) : (
+                  new Date(t.closed_at).toLocaleString('es', {
+                    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                  })
+                )}
               </span>
             </div>
           </div>
-          <div className="flex items-center justify-between mt-1.5 text-xs text-gray-500">
-            <span>Size: ${t.size_usd?.toFixed(2)}</span>
-            <span>
-              {t.status === 'OPEN' ? (
-                <span className="text-blue-400">Abierta</span>
-              ) : (
-                new Date(t.closed_at).toLocaleString('es', {
-                  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                })
-              )}
-            </span>
-          </div>
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
+
+      {chartTradeId && (
+        <TradeChart tradeId={chartTradeId} onClose={() => setChartTradeId(null)} />
+      )}
+    </>
   );
 }
 

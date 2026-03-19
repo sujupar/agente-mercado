@@ -168,7 +168,13 @@ export const api = {
     apiClient.get(`/strategies/${strategyId}/improvement-rules`),
 
   // ==========================================
-  // BROKER (OANDA)
+  // TRADE CHART
+  // ==========================================
+
+  getTradeChartData: (tradeId) => apiClient.get(`/trades/${tradeId}/chart-data`),
+
+  // ==========================================
+  // BROKER (Capital.com)
   // ==========================================
 
   getBrokerAccount: () => apiClient.get('/broker/account'),

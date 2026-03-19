@@ -273,7 +273,7 @@ function DashboardContent() {
       <footer className="hidden md:block relative z-10 border-t border-gray-800/50 mt-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <p className="text-xs text-gray-600 text-center">
-            Agente de Mercado v2.0.0 — Forex (OANDA) | Oliver Velez
+            Agente de Mercado v2.0.0 — Forex (Capital.com) | Oliver Velez
           </p>
         </div>
       </footer>

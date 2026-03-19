@@ -1,5 +1,8 @@
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { ChartBarSquareIcon } from '@heroicons/react/24/outline';
 import { InfoTooltip } from '../ui/InfoTooltip';
+import { TradeChart } from '../TradeChart';
 
 function formatDate(dateStr) {
   if (!dateStr) return '';
@@ -9,6 +12,7 @@ function formatDate(dateStr) {
 }
 
 export function TradesTable({ trades, loading }) {
+  const [chartTradeId, setChartTradeId] = useState(null);
   if (loading) {
     return (
       <div className="rounded-xl border border-gray-700/50 bg-gray-900/60 backdrop-blur-xl p-6">
@@ -60,6 +64,7 @@ export function TradesTable({ trades, loading }) {
                 </th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Resultado</th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Estado</th>
+                <th className="px-3 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Chart</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
@@ -138,6 +143,15 @@ export function TradesTable({ trades, loading }) {
                           </span>
                         )}
                       </td>
+                      <td className="px-3 py-3 text-center">
+                        <button
+                          onClick={() => setChartTradeId(trade.id)}
+                          className="p-1 rounded hover:bg-gray-700/50 transition-colors"
+                          title="Ver grafico"
+                        >
+                          <ChartBarSquareIcon className="w-4 h-4 text-gray-400 hover:text-blue-400" />
+                        </button>
+                      </td>
                     </motion.tr>
                   );
                 })}
@@ -145,6 +159,10 @@ export function TradesTable({ trades, loading }) {
             </tbody>
           </table>
         </div>
+      )}
+
+      {chartTradeId && (
+        <TradeChart tradeId={chartTradeId} onClose={() => setChartTradeId(null)} />
       )}
     </motion.div>
   );

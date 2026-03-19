@@ -65,39 +65,52 @@ def _get_broker():
     return _broker
 
 
-async def _run_orchestrator_cycle():
-    """Ejecuta un ciclo del orquestador Forex."""
+def _ensure_orchestrator():
+    """Crea el orquestador singleton si aún no existe."""
     global _orchestrator
     broker = _get_broker()
     if broker is None:
-        return
+        return None
 
     if _orchestrator is None:
         from app.core.orchestrator import ForexOrchestrator
         _orchestrator = ForexOrchestrator(broker)
 
+    return _orchestrator
+
+
+async def _run_context_cycle():
+    """Fase 1: Analiza H1/H4, corre filtros, cachea instrumentos listos."""
+    orch = _ensure_orchestrator()
+    if orch is None:
+        return
     try:
-        await _orchestrator.run_cycle()
+        await orch.run_context_cycle()
     except Exception:
-        log.exception("Error en ciclo del orquestador Forex")
+        log.exception("Error en ciclo de contexto H1/H4")
+
+
+async def _run_entry_cycle():
+    """Fase 2: Busca entradas en M5 para instrumentos listos."""
+    orch = _ensure_orchestrator()
+    if orch is None:
+        return
+    try:
+        await orch.run_entry_cycle()
+    except Exception:
+        log.exception("Error en ciclo de entrada M5")
 
 
 async def _run_position_sync():
     """Sincroniza posiciones con el broker."""
-    broker = _get_broker()
-    if broker is None:
+    orch = _ensure_orchestrator()
+    if orch is None:
         return
 
     try:
         from app.db.database import async_session_factory
-        from app.core.orchestrator import ForexOrchestrator
-
-        global _orchestrator
-        if _orchestrator is None:
-            _orchestrator = ForexOrchestrator(broker)
-
         async with async_session_factory() as session:
-            await _orchestrator._manage_positions(session)
+            await orch._manage_positions(session)
             await session.commit()
     except Exception:
         log.exception("Error en sincronización de posiciones")
@@ -107,18 +120,27 @@ async def start_scheduler() -> None:
     global _scheduler
     _scheduler = AsyncIOScheduler()
 
-    # Job 1: Ciclo Forex — cada N min
-    cycle_minutes = max(settings.cycle_interval_minutes, 5)
+    # Job 1: Contexto H1/H4 — cada 15 min
     _scheduler.add_job(
-        _run_orchestrator_cycle,
-        trigger=IntervalTrigger(minutes=cycle_minutes),
-        id="orchestrator_cycle",
-        name="Ciclo Forex (señales + trades)",
+        _run_context_cycle,
+        trigger=IntervalTrigger(minutes=15),
+        id="context_cycle",
+        name="Contexto H1/H4 (8 filtros)",
         replace_existing=True,
         max_instances=1,
     )
 
-    # Job 2: Sync de posiciones — cada 30 segundos
+    # Job 2: Entradas M5 — cada 1 min
+    _scheduler.add_job(
+        _run_entry_cycle,
+        trigger=IntervalTrigger(minutes=1),
+        id="entry_cycle",
+        name="Entradas M5 (pullback + patrón)",
+        replace_existing=True,
+        max_instances=1,
+    )
+
+    # Job 3: Sync de posiciones — cada 30 segundos
     _scheduler.add_job(
         _run_position_sync,
         trigger=IntervalTrigger(seconds=30),
@@ -130,9 +152,8 @@ async def start_scheduler() -> None:
 
     _scheduler.start()
     log.info(
-        "Scheduler Forex iniciado: broker=%s, ciclo=%dmin, sync=30seg",
+        "Scheduler Forex iniciado: broker=%s | contexto=15min | entradas=1min | sync=30seg",
         settings.broker_provider,
-        cycle_minutes,
     )
 
 
@@ -150,5 +171,6 @@ async def stop_scheduler() -> None:
 
 
 async def trigger_manual_cycle() -> None:
-    """Fuerza un ciclo manual fuera del scheduler."""
-    await _run_orchestrator_cycle()
+    """Fuerza un ciclo manual completo (contexto + entradas)."""
+    await _run_context_cycle()
+    await _run_entry_cycle()

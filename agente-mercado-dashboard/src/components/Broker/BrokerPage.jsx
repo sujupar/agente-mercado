@@ -57,7 +57,7 @@ function AccountCard({ account, isLoading }) {
       className="bg-gray-900/60 backdrop-blur-xl border border-gray-800/50 rounded-2xl p-5"
     >
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-semibold text-gray-300">Cuenta OANDA</h3>
+        <h3 className="text-sm font-semibold text-gray-300">Cuenta Capital.com</h3>
         <ConnectionBadge connected={account.connected} />
       </div>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">

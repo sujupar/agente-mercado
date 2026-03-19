@@ -399,3 +399,52 @@ class AllMarketStatesOut(BaseModel):
     current_session: str | None
     market_open: bool
     instruments: list[MarketStateOut]
+
+
+# --- Trade Chart Schemas ---
+
+class ChartCandleOut(BaseModel):
+    """Una vela OHLCV para el gráfico."""
+    time: int  # Unix timestamp (seconds)
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float = 0.0
+
+
+class TradeMarkerOut(BaseModel):
+    """Marcador sobre el gráfico (entrada, salida, SL, TP)."""
+    time: int  # Unix timestamp (seconds)
+    position: str  # "aboveBar" | "belowBar"
+    color: str
+    shape: str  # "arrowUp" | "arrowDown" | "circle"
+    text: str
+
+
+class TradePriceLine(BaseModel):
+    """Línea horizontal de precio (SL, TP, entry)."""
+    price: float
+    color: str
+    line_style: int  # 0=solid, 1=dashed, 2=dotted
+    label: str
+
+
+class TradeChartDataOut(BaseModel):
+    """Datos completos para renderizar el gráfico de un trade."""
+    trade_id: int
+    symbol: str
+    direction: str
+    timeframe: str
+    status: str
+    entry_price: float
+    exit_price: float | None
+    stop_loss: float | None
+    take_profit: float | None
+    pnl: float | None
+    pattern_name: str | None
+    entry_time: str | None
+    exit_time: str | None
+    candles: list[ChartCandleOut]
+    markers: list[TradeMarkerOut]
+    price_lines: list[TradePriceLine]

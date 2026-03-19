@@ -33,6 +33,11 @@ class StrategyConfig:
     # Timeframes
     primary_timeframe: str = "H1"
     context_timeframe: str = "H4"
+    entry_timeframe: str = "M5"  # Timeframe para buscar entradas (Oliver Vélez)
+
+    # Umbrales M5 para pullback detector
+    m5_min_retrace_pct: float = 0.20  # 20% retrace (más bajo que H1)
+    m5_ema20_zone_atr_mult: float = 0.50  # 0.50 ATR zone (más ancho que H1)
 
     # Risk (Oliver Vélez)
     risk_per_trade_pct: float = 0.01  # 1% del balance
@@ -45,8 +50,8 @@ class StrategyConfig:
     # Estado
     enabled: bool = True
 
-    # Capital inicial (para demo/tracking)
-    initial_capital_usd: float = 100_000.0  # OANDA demo empieza con $100K
+    # Capital inicial (se sincroniza con broker al arrancar)
+    initial_capital_usd: float = 5_500.0  # Mitad del balance demo Capital.com
 
     # Learning
     trades_per_learning_report: int = 15
