@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.core.scheduler import start_scheduler, stop_scheduler
-from app.db.database import engine
+from app.db.database import engine, Base, async_session_factory
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,8 +27,44 @@ async def lifespan(app: FastAPI):
     log.info("=== Agente de Mercado iniciando ===")
     log.info("Modo: %s | Capital: $%.2f", settings.agent_mode, settings.initial_capital_usd)
 
-    # Importar modelos para que Alembic los conozca
+    # Importar modelos y crear tablas si no existen
     from app.db import models  # noqa: F401
+    from app.db.models import AgentState, Strategy
+    from app.strategies.registry import STRATEGIES
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    log.info("Tablas verificadas/creadas")
+
+    # Sembrar estrategias si la DB está vacía
+    async with async_session_factory() as session:
+        from sqlalchemy import select, func
+        result = await session.execute(select(func.count(Strategy.id)))
+        if result.scalar() == 0:
+            log.info("DB vacía — sembrando estrategias...")
+            for sid, config in STRATEGIES.items():
+                session.add(Strategy(
+                    id=config.id, name=config.name,
+                    description=config.description, enabled=config.enabled,
+                    params={"signal_type": config.signal_type, "direction": config.direction,
+                            "instruments": list(config.instruments),
+                            "primary_timeframe": config.primary_timeframe,
+                            "context_timeframe": config.context_timeframe,
+                            "risk_per_trade_pct": config.risk_per_trade_pct,
+                            "min_risk_reward": config.min_risk_reward,
+                            "max_concurrent_positions": config.max_concurrent_positions,
+                            "cycle_interval_minutes": config.cycle_interval_minutes,
+                            "trades_per_improvement_cycle": config.trades_per_improvement_cycle},
+                    status_text="Activa — esperando señales",
+                    llm_budget_fraction=config.llm_budget_fraction,
+                ))
+                session.add(AgentState(
+                    strategy_id=config.id, mode="SIMULATION",
+                    capital_usd=config.initial_capital_usd,
+                    peak_capital_usd=config.initial_capital_usd,
+                ))
+                log.info("  Sembrada: %s", config.id)
+            await session.commit()
 
     # Iniciar scheduler
     await start_scheduler()
