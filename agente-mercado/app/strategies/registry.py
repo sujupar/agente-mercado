@@ -51,7 +51,7 @@ class StrategyConfig:
     enabled: bool = True
 
     # Capital inicial (se sincroniza con broker al arrancar)
-    initial_capital_usd: float = 50.0  # $50 por estrategia para simulación
+    initial_capital_usd: float = 5_500.0  # Sincroniza con balance real del broker
 
     # Learning
     trades_per_learning_report: int = 15

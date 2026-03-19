@@ -341,14 +341,14 @@ class ForexOrchestrator:
             log.exception("Error obteniendo precio de %s", signal.instrument)
             return False
 
-        # 4. Obtener capital de la estrategia (NO del broker)
+        # 4. Obtener AgentState para tracking
         state = await self._ensure_state(session, strategy_id)
 
-        # 5. Calcular position size con capital de la estrategia
+        # 5. Calcular position size con balance REAL del broker (1% riesgo)
         stop_distance = abs(signal.entry_price - signal.stop_price)
         units = calculate_position_size(
             instrument=signal.instrument,
-            account_balance=state.capital_usd,
+            account_balance=account.balance,
             risk_pct=strategy_config.risk_per_trade_pct,
             stop_distance_price=stop_distance,
             current_price=price.mid,
@@ -397,7 +397,7 @@ class ForexOrchestrator:
         await session.flush()
 
         # 7. Calcular datos técnicos de entrada
-        risk_amount = state.capital_usd * strategy_config.risk_per_trade_pct
+        risk_amount = account.balance * strategy_config.risk_per_trade_pct
 
         # EMA20 distance en ATR
         ema20_dist_atr = None

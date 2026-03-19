@@ -1546,12 +1546,20 @@ async def reset_simulation(session: AsyncSession = Depends(get_session)):
     """Resetea capital, trades y señales para reiniciar simulación limpia."""
     from sqlalchemy import text
 
+    # Sincronizar capital con el balance real del broker
+    try:
+        broker = await _get_broker()
+        acct = await broker.get_account()
+        balance = acct.balance
+    except Exception:
+        balance = 5500.0  # Fallback
+
     await session.execute(text(
-        "UPDATE agent_state SET capital_usd = 50.0, peak_capital_usd = 50.0, "
+        "UPDATE agent_state SET capital_usd = :bal, peak_capital_usd = :bal, "
         "total_pnl = 0, trades_executed_total = 0, trades_won = 0, trades_lost = 0, "
         "positions_open = 0 "
         "WHERE strategy_id IN ('s1_pullback_20_up', 's2_pullback_20_down')"
-    ))
+    ).bindparams(bal=balance))
     await session.execute(text("DELETE FROM trades"))
     await session.execute(text("DELETE FROM signals"))
     await session.execute(text("DELETE FROM bitacora"))
@@ -1560,4 +1568,4 @@ async def reset_simulation(session: AsyncSession = Depends(get_session)):
     await session.execute(text("DELETE FROM improvement_cycles"))
     await session.commit()
 
-    return {"status": "ok", "message": "Simulación reseteada: capital=$50, trades/signals/rules borrados"}
+    return {"status": "ok", "message": f"Reseteado con balance real del broker: ${balance:.2f}"}
