@@ -179,9 +179,10 @@ class ForexSignalGenerator:
                 state_h1, state_h4, direction,
             )
             if not filter_result.passed:
-                log.debug(
-                    "[%s] %s contexto NO pasa: %s",
+                log.info(
+                    "[%s] %s contexto NO pasa (%d/8): %s",
                     self._config.id, instrument,
+                    len(filter_result.passed_filters),
                     ", ".join(filter_result.failed_filters),
                 )
                 continue
@@ -251,7 +252,7 @@ class ForexSignalGenerator:
                     reasons.append(f"retrace {pullback.retrace_pct*100:.1f}% < {self._config.entry_min_retrace_pct*100:.0f}%")
                 if pullback.distance_to_ema20_atr > self._config.entry_ema20_zone_atr_mult:
                     reasons.append(f"dist_ema20 {pullback.distance_to_ema20_atr:.2f} > {self._config.entry_ema20_zone_atr_mult:.2f} ATR")
-                log.debug(
+                log.info(
                     "[%s] %s %s: pullback no válido — %s",
                     self._config.id, instrument, self._config.entry_timeframe,
                     ", ".join(reasons) or "impulse_range=0 o atr=0",
@@ -262,7 +263,7 @@ class ForexSignalGenerator:
             recent_candles = candles_entry[-5:]
             patterns = self._pattern_detector.detect_all(recent_candles, direction)
             if not patterns:
-                log.debug(
+                log.info(
                     "[%s] %s %s: pullback OK pero sin patrón de entrada en últimas 5 velas",
                     self._config.id, instrument, self._config.entry_timeframe,
                 )
