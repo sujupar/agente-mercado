@@ -21,7 +21,7 @@ from app.broker.models import Candle
 from app.config import settings
 from app.db.database import async_session_factory
 from app.db.models import AgentState, Bitacora, Signal, Trade
-from app.forex.instruments import calculate_position_size, is_spread_acceptable
+from app.forex.instruments import calculate_position_size, get_stepped_risk_base, is_spread_acceptable
 from app.forex.sessions import get_current_session, is_forex_market_open, is_trading_session
 from app.learning.bitacora_engine import BitacoraEngine
 from app.learning.improvement_engine import ImprovementEngine
@@ -161,9 +161,9 @@ class ForexOrchestrator:
 
                     # Fetch candles de entrada solo para instrumentos listos
                     ready_instruments = list(context.keys())
-                    m5_data = await self._fetch_entry_candles(ready_instruments, config.entry_timeframe)
+                    entry_data = await self._fetch_entry_candles(ready_instruments, config.entry_timeframe)
 
-                    if not m5_data:
+                    if not entry_data:
                         continue
 
                     # Generar señales
@@ -171,7 +171,7 @@ class ForexOrchestrator:
                         session, strategy_id,
                     )
                     generator = ForexSignalGenerator(config, improvement_rules)
-                    signals = generator.scan_entries(context, m5_data)
+                    signals = generator.scan_entries(context, entry_data)
 
                     for signal in signals:
                         traded = await self._execute_signal(session, signal, strategy_id)
@@ -341,14 +341,38 @@ class ForexOrchestrator:
             log.exception("Error obteniendo precio de %s", signal.instrument)
             return False
 
-        # 4. Obtener AgentState para tracking
+        # 4. Obtener AgentState para tracking + stepped compound
         state = await self._ensure_state(session, strategy_id)
 
-        # 5. Calcular position size con balance REAL del broker (1% riesgo)
+        # 5. Calcular position size con riesgo escalonado (stepped compound)
+        # Base capital = monto sobre el cual se calcula el 1% de riesgo.
+        # Solo sube cuando el balance alcanza +50% sobre la base.
+        base_capital = state.base_capital_usd or account.balance
+        risk_base, next_threshold = get_stepped_risk_base(
+            account.balance, base_capital,
+        )
+
+        # Actualizar si subió de nivel
+        if risk_base != base_capital:
+            state.base_capital_usd = risk_base
+            state.next_threshold_usd = next_threshold
+            log.info(
+                "[%s] Base capital actualizado: $%.2f → $%.2f (next: $%.2f)",
+                strategy_id, base_capital, risk_base, next_threshold,
+            )
+        elif state.base_capital_usd is None:
+            # Inicializar base capital con balance actual del broker
+            state.base_capital_usd = account.balance
+            state.next_threshold_usd = next_threshold
+            log.info(
+                "[%s] Base capital inicializado: $%.2f (next: $%.2f)",
+                strategy_id, account.balance, next_threshold,
+            )
+
         stop_distance = abs(signal.entry_price - signal.stop_price)
         units = calculate_position_size(
             instrument=signal.instrument,
-            account_balance=account.balance,
+            account_balance=risk_base,
             risk_pct=strategy_config.risk_per_trade_pct,
             stop_distance_price=stop_distance,
             current_price=price.mid,
@@ -397,7 +421,7 @@ class ForexOrchestrator:
         await session.flush()
 
         # 7. Calcular datos técnicos de entrada
-        risk_amount = account.balance * strategy_config.risk_per_trade_pct
+        risk_amount = risk_base * strategy_config.risk_per_trade_pct
 
         # EMA20 distance en ATR
         ema20_dist_atr = None

@@ -35,9 +35,9 @@ class StrategyConfig:
     context_timeframe: str = "H4"
     entry_timeframe: str = "M1"  # Timeframe para buscar entradas (Oliver Vélez — M1 lo más cercano a M2)
 
-    # Umbrales M5 para pullback detector
-    m5_min_retrace_pct: float = 0.20  # 20% retrace (más bajo que H1)
-    m5_ema20_zone_atr_mult: float = 0.50  # 0.50 ATR zone (más ancho que H1)
+    # Umbrales de entrada para pullback detector (M1/M5)
+    entry_min_retrace_pct: float = 0.20  # 20% retrace (más bajo que H1)
+    entry_ema20_zone_atr_mult: float = 0.50  # 0.50 ATR zone (más ancho que H1)
 
     # Risk (Oliver Vélez)
     risk_per_trade_pct: float = 0.01  # 1% del balance

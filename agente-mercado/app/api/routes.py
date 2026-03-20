@@ -87,12 +87,22 @@ async def health_check(session: AsyncSession = Depends(get_session)):
 async def get_status(
     session: AsyncSession = Depends(get_session),
 ):
-    # Sumar capital de TODAS las estrategias (no de "momentum")
+    # Usar broker_balance real (no sumar capital_usd de cada estrategia)
     states_result = await session.execute(select(AgentState))
     all_states = states_result.scalars().all()
 
-    total_capital = sum(s.capital_usd for s in all_states) if all_states else 0.0
-    total_peak = sum(s.peak_capital_usd for s in all_states) if all_states else 0.0
+    # Capital = broker balance real (es el mismo para ambas estrategias)
+    broker_bal = max(
+        (s.broker_balance for s in all_states if s.broker_balance),
+        default=0.0,
+    )
+    total_capital = broker_bal if broker_bal > 0 else (
+        sum(s.capital_usd for s in all_states) if all_states else 0.0
+    )
+    total_peak = max(
+        (s.peak_capital_usd for s in all_states if s.peak_capital_usd),
+        default=0.0,
+    ) if all_states else 0.0
     total_positions_open = sum(s.positions_open for s in all_states) if all_states else 0
     total_trades_won = sum(s.trades_won for s in all_states) if all_states else 0
     total_trades_lost = sum(s.trades_lost for s in all_states) if all_states else 0
@@ -140,6 +150,18 @@ async def get_status(
         last_cycle_at=last_cycle,
         cycle_interval_minutes=settings.cycle_interval_minutes,
         llm_usage=llm_usage,
+        base_capital_usd=max(
+            (s.base_capital_usd for s in all_states if s.base_capital_usd),
+            default=None,
+        ),
+        next_threshold_usd=max(
+            (s.next_threshold_usd for s in all_states if s.next_threshold_usd),
+            default=None,
+        ),
+        risk_per_trade_usd=(
+            max((s.base_capital_usd for s in all_states if s.base_capital_usd), default=0)
+            * 0.01
+        ) or None,
         survival_status="CONTINUE",
         survival_reason=None,
     )
@@ -733,6 +755,9 @@ async def get_strategies(
             win_rate=round(wr, 4),
             mode=state.mode if state else "UNKNOWN",
             last_trade_at=state.last_trade_at if state else None,
+            base_capital_usd=state.base_capital_usd if state else None,
+            next_threshold_usd=state.next_threshold_usd if state else None,
+            risk_per_trade_usd=(state.base_capital_usd * 0.01) if state and state.base_capital_usd else None,
             improvement_cycle=cycle_progress,
             active_rules_count=active_rules_count,
         ))

@@ -99,10 +99,10 @@ class ForexSignalGenerator:
         self._pattern_detector = EntryPatternDetector()
         # Pullback detector H1 (umbrales estándar)
         self._pullback_detector = PullbackDetector()
-        # Pullback detector M5 (umbrales más permisivos)
-        self._pullback_detector_m5 = PullbackDetector(
-            min_retrace_pct=config.m5_min_retrace_pct,
-            ema20_zone_atr_mult=config.m5_ema20_zone_atr_mult,
+        # Pullback detector para timeframe de entrada (umbrales más permisivos)
+        self._pullback_detector_entry = PullbackDetector(
+            min_retrace_pct=config.entry_min_retrace_pct,
+            ema20_zone_atr_mult=config.entry_ema20_zone_atr_mult,
         )
 
     def generate_signals(
@@ -208,7 +208,7 @@ class ForexSignalGenerator:
     def scan_entries(
         self,
         context_results: dict[str, ContextResult],
-        m5_data: dict[str, list[Candle]],
+        entry_data: dict[str, list[Candle]],
     ) -> list[ForexSignal]:
         """Fase 2: Busca pullback + patrón en timeframe de entrada para instrumentos listos.
 
@@ -217,32 +217,55 @@ class ForexSignalGenerator:
 
         Args:
             context_results: Resultado cacheado de check_context()
-            m5_data: {"EUR_USD": [Candle, ...], ...} (M1 o M5 según config)
+            entry_data: {"EUR_USD": [Candle, ...], ...} candles del entry_timeframe
         """
         direction = self._config.direction
         signals: list[ForexSignal] = []
 
         for instrument, ctx in context_results.items():
-            candles_m5 = m5_data.get(instrument, [])
-            if not candles_m5:
+            candles_entry = entry_data.get(instrument, [])
+            if not candles_entry:
+                log.debug(
+                    "[%s] %s: sin candles %s",
+                    self._config.id, instrument, self._config.entry_timeframe,
+                )
                 continue
 
-            # MarketState M5 (sin SMA200)
-            state_m5 = self._state_analyzer.analyze(
-                instrument, "M5", candles_m5, require_sma200=False,
+            # MarketState en timeframe de entrada (sin SMA200)
+            state_entry = self._state_analyzer.analyze(
+                instrument, self._config.entry_timeframe, candles_entry,
+                require_sma200=False,
             )
-            if state_m5 is None:
+            if state_entry is None:
+                log.debug(
+                    "[%s] %s: MarketState %s es None (datos insuficientes)",
+                    self._config.id, instrument, self._config.entry_timeframe,
+                )
                 continue
 
-            # Pullback en M5 (umbrales permisivos)
-            pullback = self._pullback_detector_m5.detect(state_m5, direction)
+            # Pullback en timeframe de entrada (umbrales permisivos)
+            pullback = self._pullback_detector_entry.detect(state_entry, direction)
             if not pullback.is_valid:
+                reasons = []
+                if pullback.retrace_pct < self._config.entry_min_retrace_pct:
+                    reasons.append(f"retrace {pullback.retrace_pct*100:.1f}% < {self._config.entry_min_retrace_pct*100:.0f}%")
+                if pullback.distance_to_ema20_atr > self._config.entry_ema20_zone_atr_mult:
+                    reasons.append(f"dist_ema20 {pullback.distance_to_ema20_atr:.2f} > {self._config.entry_ema20_zone_atr_mult:.2f} ATR")
+                log.debug(
+                    "[%s] %s %s: pullback no válido — %s",
+                    self._config.id, instrument, self._config.entry_timeframe,
+                    ", ".join(reasons) or "impulse_range=0 o atr=0",
+                )
                 continue
 
-            # Patrón de entrada en últimas 5 velas M5
-            recent_candles = candles_m5[-5:]
+            # Patrón de entrada en últimas 5 velas
+            recent_candles = candles_entry[-5:]
             patterns = self._pattern_detector.detect_all(recent_candles, direction)
             if not patterns:
+                log.debug(
+                    "[%s] %s %s: pullback OK pero sin patrón de entrada en últimas 5 velas",
+                    self._config.id, instrument, self._config.entry_timeframe,
+                )
                 continue
 
             best_pattern = max(patterns, key=lambda p: p.confidence)
@@ -258,19 +281,20 @@ class ForexSignalGenerator:
                 continue
 
             signal.entry_timeframe = self._config.entry_timeframe
-            signal.entry_candle = candles_m5[-1] if candles_m5 else None
+            signal.entry_candle = candles_entry[-1] if candles_entry else None
 
             # Improvement rules
             if not self._passes_improvement_rules(signal):
                 log.info(
-                    "[%s] Señal M5 %s %s rechazada por regla de mejora",
-                    self._config.id, direction, instrument,
+                    "[%s] Señal %s %s %s rechazada por regla de mejora",
+                    self._config.id, self._config.entry_timeframe, direction, instrument,
                 )
                 continue
 
             log.info(
-                "[%s] SEÑAL M5 %s %s — %s entry=%.5f stop=%.5f tp1=%.5f",
-                self._config.id, direction, instrument, best_pattern.pattern_type,
+                "[%s] SEÑAL %s %s %s — %s entry=%.5f stop=%.5f tp1=%.5f",
+                self._config.id, self._config.entry_timeframe,
+                direction, instrument, best_pattern.pattern_type,
                 signal.entry_price, signal.stop_price, signal.tp1_price,
             )
             signals.append(signal)

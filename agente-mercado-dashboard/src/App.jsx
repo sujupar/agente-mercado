@@ -195,10 +195,15 @@ function DashboardContent() {
 
             <div className="flex items-center space-x-3 md:space-x-4">
               <div className="text-right">
-                <p className="text-[10px] md:text-xs text-gray-500">Capital</p>
+                <p className="text-[10px] md:text-xs text-gray-500">Balance Broker</p>
                 <p className="text-xs md:text-sm font-bold text-white">
                   ${agentData?.capital_usd?.toFixed(2) || '0.00'}
                 </p>
+                {agentData?.base_capital_usd && (
+                  <p className="text-[9px] md:text-[10px] text-gray-500">
+                    Base: ${agentData.base_capital_usd.toFixed(0)} | Riesgo: ${agentData.risk_per_trade_usd?.toFixed(0) || '—'}/trade
+                  </p>
+                )}
               </div>
 
               <span

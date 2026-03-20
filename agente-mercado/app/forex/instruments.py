@@ -179,3 +179,33 @@ def is_spread_acceptable(instrument: str, current_spread: float) -> bool:
 def get_buffer_price(instrument: str, buffer_pips: float = 1.0) -> float:
     """Obtiene el buffer en precio para entry/stop (1 pip por defecto)."""
     return buffer_pips * get_pip_size(instrument)
+
+
+def get_stepped_risk_base(
+    current_balance: float,
+    base_capital: float,
+    step_pct: float = 0.50,
+) -> tuple[float, float]:
+    """Calcula la base de riesgo escalonado (stepped compound interest).
+
+    El riesgo se calcula sobre base_capital, NO sobre current_balance.
+    La base solo sube cuando el balance alcanza base_capital × (1 + step_pct).
+
+    Ejemplo: base=$10K, step=50% → riesgo sobre $10K hasta que balance
+    llegue a $15K → entonces base=$15K, next=$22.5K.
+
+    Args:
+        current_balance: Balance actual de la cuenta del broker.
+        base_capital: Base de capital actual para calcular riesgo.
+        step_pct: Porcentaje de incremento para subir de nivel (default 50%).
+
+    Returns:
+        Tupla (risk_base, next_threshold):
+        - risk_base: base sobre la cual calcular el 1% de riesgo
+        - next_threshold: balance al que hay que llegar para subir de nivel
+    """
+    threshold = base_capital * (1 + step_pct)
+    if current_balance >= threshold:
+        new_base = threshold
+        return new_base, new_base * (1 + step_pct)
+    return base_capital, threshold

@@ -28,6 +28,9 @@ class AgentStatus(BaseModel):
     last_cycle_at: datetime | None
     cycle_interval_minutes: int
     llm_usage: dict
+    base_capital_usd: float | None = None
+    next_threshold_usd: float | None = None
+    risk_per_trade_usd: float | None = None
     survival_status: str | None = None
     survival_reason: str | None = None
 
@@ -244,6 +247,9 @@ class StrategyOut(BaseModel):
     win_rate: float
     mode: str
     last_trade_at: datetime | None
+    base_capital_usd: float | None = None
+    next_threshold_usd: float | None = None
+    risk_per_trade_usd: float | None = None
     improvement_cycle: CycleProgressOut | None = None
     active_rules_count: int = 0
 

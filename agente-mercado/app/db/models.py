@@ -176,6 +176,10 @@ class AgentState(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # Stepped compound interest (riesgo escalonado)
+    base_capital_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    next_threshold_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
