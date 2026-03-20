@@ -33,6 +33,18 @@ async def lifespan(app: FastAPI):
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        # Migrar columnas nuevas que create_all no agrega a tablas existentes
+        from sqlalchemy import text
+        migrations = [
+            "ALTER TABLE agent_state ADD COLUMN IF NOT EXISTS base_capital_usd FLOAT",
+            "ALTER TABLE agent_state ADD COLUMN IF NOT EXISTS next_threshold_usd FLOAT",
+        ]
+        for sql in migrations:
+            try:
+                await conn.execute(text(sql))
+            except Exception:
+                pass  # Columna ya existe o DB no soporta IF NOT EXISTS
     log.info("Tablas verificadas/creadas")
 
     # Sembrar estrategias si la DB está vacía
