@@ -37,6 +37,15 @@ async def lifespan(app: FastAPI):
         # Migrar columnas nuevas que create_all no agrega a tablas existentes
         from sqlalchemy import text
         migrations = [
+            # Trade: 7 columnas técnicas de entrada (improvement engine)
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_ema20_distance_atr FLOAT",
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_sma200_distance_atr FLOAT",
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_candle_body_pct FLOAT",
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_candle_upper_wick_pct FLOAT",
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_candle_lower_wick_pct FLOAT",
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_atr14 FLOAT",
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_retrace_pct FLOAT",
+            # AgentState: stepped compound interest
             "ALTER TABLE agent_state ADD COLUMN IF NOT EXISTS base_capital_usd FLOAT",
             "ALTER TABLE agent_state ADD COLUMN IF NOT EXISTS next_threshold_usd FLOAT",
         ]
