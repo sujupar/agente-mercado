@@ -96,7 +96,7 @@ class MarketStateAnalyzer:
             price_vs_sma200 = "ABOVE" if current_price > sma200 else "BELOW"
             sma200_slope = self._calculate_slope(closes, 200, lookback=10)
             ema20_vs_sma200 = "ABOVE" if ema20 > sma200 else "BELOW"
-            ma_state = self._classify_ma_state(ema20, sma200, current_price)
+            ma_state = self._classify_ma_state(ema20, sma200, current_price, atr14)
             trend_state = self._classify_trend(
                 price_vs_sma200, sma200_slope, highs, lows,
             )
@@ -246,13 +246,30 @@ class MarketStateAnalyzer:
         return "FLAT"
 
     @staticmethod
-    def _classify_ma_state(ema20: float, sma200: float, price: float) -> str:
-        """NARROW / NORMAL / WIDE basado en distancia EMA20 a SMA200."""
+    def _classify_ma_state(
+        ema20: float, sma200: float, price: float, atr14: float = 0.0,
+    ) -> str:
+        """NARROW / NORMAL / WIDE basado en distancia EMA20 a SMA200.
+
+        Usa ATR si disponible (más robusto para instrumentos volátiles como XAU_USD).
+        Fallback a porcentaje de precio si ATR no está disponible.
+        """
         if price == 0:
             return "NORMAL"
 
-        distance_pct = abs(ema20 - sma200) / price * 100
+        distance = abs(ema20 - sma200)
 
+        # Preferir clasificación por ATR (universal across instruments)
+        if atr14 > 0:
+            distance_atr = distance / atr14
+            if distance_atr < 0.5:
+                return "NARROW"
+            elif distance_atr > 3.0:
+                return "WIDE"
+            return "NORMAL"
+
+        # Fallback: porcentaje del precio
+        distance_pct = distance / price * 100
         if distance_pct < NARROW_PCT:
             return "NARROW"
         elif distance_pct > WIDE_PCT:
@@ -310,15 +327,17 @@ class MarketStateAnalyzer:
     ) -> str:
         """Clasifica la tendencia: UP, DOWN o RANGE.
 
-        UP requiere: precio > SMA200, SMA200 subiendo, swings crecientes.
-        DOWN requiere: precio < SMA200, SMA200 bajando, swings decrecientes.
+        UP requiere: precio > SMA200 + SMA200 no bajando.
+        Se confirma con swings si hay suficientes, pero las MAs tienen prioridad
+        (Oliver Vélez: la SMA200 ES el indicador de tendencia).
         """
-        # Verificar swings crecientes/decrecientes en las últimas 20 velas
+        # Buscar swings en las últimas 40 velas (más amplio para menos ruido)
         recent_swing_highs = []
         recent_swing_lows = []
         lookback = SWING_LOOKBACK
+        search_start = max(lookback, len(highs) - 40)
 
-        for i in range(max(lookback, len(highs) - 20), len(highs) - lookback):
+        for i in range(search_start, len(highs) - lookback):
             # Swing high
             is_sh = all(
                 highs[i] > highs[i - j] and highs[i] > highs[i + j]
@@ -337,50 +356,63 @@ class MarketStateAnalyzer:
             if is_sl:
                 recent_swing_lows.append(lows[i])
 
-        # Necesitamos al menos 2 swings para evaluar secuencia
-        highs_rising = (
+        # Solo comparar los últimos 2 swings (no toda la secuencia)
+        last2_highs_rising = (
             len(recent_swing_highs) >= 2
-            and all(
-                recent_swing_highs[i] > recent_swing_highs[i - 1]
-                for i in range(1, len(recent_swing_highs))
-            )
+            and recent_swing_highs[-1] > recent_swing_highs[-2]
         )
-        lows_rising = (
+        last2_lows_rising = (
             len(recent_swing_lows) >= 2
-            and all(
-                recent_swing_lows[i] > recent_swing_lows[i - 1]
-                for i in range(1, len(recent_swing_lows))
-            )
+            and recent_swing_lows[-1] > recent_swing_lows[-2]
         )
-        highs_falling = (
+        last2_highs_falling = (
             len(recent_swing_highs) >= 2
-            and all(
-                recent_swing_highs[i] < recent_swing_highs[i - 1]
-                for i in range(1, len(recent_swing_highs))
-            )
+            and recent_swing_highs[-1] < recent_swing_highs[-2]
         )
-        lows_falling = (
+        last2_lows_falling = (
             len(recent_swing_lows) >= 2
-            and all(
-                recent_swing_lows[i] < recent_swing_lows[i - 1]
-                for i in range(1, len(recent_swing_lows))
-            )
+            and recent_swing_lows[-1] < recent_swing_lows[-2]
         )
 
-        # UP: precio encima, SMA200 subiendo, swings crecientes
+        swings_support_up = last2_highs_rising or last2_lows_rising
+        swings_support_down = last2_highs_falling or last2_lows_falling
+        insufficient_swings = len(recent_swing_highs) < 2 and len(recent_swing_lows) < 2
+
+        # UP: precio encima + SMA200 no bajando + (swings confirman O datos insuficientes)
         if (
             price_vs_sma200 == "ABOVE"
             and sma200_slope in ("UP", "FLAT")
-            and (highs_rising or lows_rising)
+            and (swings_support_up or insufficient_swings)
         ):
             return "UP"
 
-        # DOWN: precio debajo, SMA200 bajando, swings decrecientes
+        # DOWN: precio debajo + SMA200 no subiendo + (swings confirman O datos insuficientes)
         if (
             price_vs_sma200 == "BELOW"
             and sma200_slope in ("DOWN", "FLAT")
-            and (highs_falling or lows_falling)
+            and (swings_support_down or insufficient_swings)
         ):
+            return "DOWN"
+
+        # Fallback: si las MAs son claras pero swings contradicen, log y still trust MAs
+        if price_vs_sma200 == "ABOVE" and sma200_slope in ("UP", "FLAT"):
+            log.info(
+                "Trend RANGE→UP override: price ABOVE SMA200 + slope %s pero swings no confirman "
+                "(sh=%s, sl=%s)",
+                sma200_slope,
+                [f"{h:.5f}" for h in recent_swing_highs[-3:]],
+                [f"{l:.5f}" for l in recent_swing_lows[-3:]],
+            )
+            return "UP"
+
+        if price_vs_sma200 == "BELOW" and sma200_slope in ("DOWN", "FLAT"):
+            log.info(
+                "Trend RANGE→DOWN override: price BELOW SMA200 + slope %s pero swings no confirman "
+                "(sh=%s, sl=%s)",
+                sma200_slope,
+                [f"{h:.5f}" for h in recent_swing_highs[-3:]],
+                [f"{l:.5f}" for l in recent_swing_lows[-3:]],
+            )
             return "DOWN"
 
         return "RANGE"

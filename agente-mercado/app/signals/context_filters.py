@@ -126,10 +126,12 @@ class ContextFilterEngine:
         all_passed = len(failed) == 0
 
         if not all_passed:
-            log.debug(
-                "Filtros LONG fallidos para %s: %s",
-                h1.instrument,
-                ", ".join(failed),
+            log.info(
+                "Filtros LONG %s: %d/8 — fallan: %s | trend=%s price_vs_sma=%s ema20_vs_sma=%s "
+                "sma_slope=%s ema_slope=%s ma_state=%s trap=%s",
+                h1.instrument, len(passed), ", ".join(failed),
+                h1.trend_state, h1.price_vs_sma200, h1.ema20_vs_sma200,
+                h1.sma200_slope, h1.ema20_slope, h1.ma_state, h1.trap_zone,
             )
 
         return FilterResult(passed=all_passed, passed_filters=passed, failed_filters=failed)
@@ -191,10 +193,12 @@ class ContextFilterEngine:
         all_passed = len(failed) == 0
 
         if not all_passed:
-            log.debug(
-                "Filtros SHORT fallidos para %s: %s",
-                h1.instrument,
-                ", ".join(failed),
+            log.info(
+                "Filtros SHORT %s: %d/8 — fallan: %s | trend=%s price_vs_sma=%s ema20_vs_sma=%s "
+                "sma_slope=%s ema_slope=%s ma_state=%s trap=%s",
+                h1.instrument, len(passed), ", ".join(failed),
+                h1.trend_state, h1.price_vs_sma200, h1.ema20_vs_sma200,
+                h1.sma200_slope, h1.ema20_slope, h1.ma_state, h1.trap_zone,
             )
 
         return FilterResult(passed=all_passed, passed_filters=passed, failed_filters=failed)
