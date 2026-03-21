@@ -59,13 +59,13 @@
 1. [Ciclo #1] Alta concentración de trades perdedores en la ventana de apertura de mercado (11:30 - 12:05 UTC), donde la volatilidad inicial genera falsos pullbacks a la EMA20 que son rápidamente revertidos.
 
 ### Para S1 (LONG):
-1. `trend_state_H1 == "UP"`
+1. `trend_state_H1 == "UP"` — La SMA200 ES el indicador de tendencia. UP si price>SMA200 + slope UP/FLAT. Swings confirman pero no bloquean (solo se comparan los últimos 2).
 2. `trend_state_H4 != "DOWN"`
 3. `price > SMA200` en H1
 4. `EMA20 > SMA200` en H1
 5. `sma200_slope_H1` in ("UP", "FLAT")
 6. `ema20_slope_H1` in ("UP", "FLAT")
-7. `ma_state_H1 != "WIDE"`
+7. `ma_state_H1 != "WIDE"` — WIDE = |EMA20-SMA200| > 3×ATR14 (ATR-relativo, no porcentaje fijo)
 8. `trap_zone_H1 == false`
 
 ### Para S2 (SHORT):
