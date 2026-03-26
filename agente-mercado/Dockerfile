@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml .
 RUN pip install --no-cache-dir .
 
-# Copiar código
+# Copiar código (v2 - bust cache)
 COPY . .
 
 # Puerto (Railway inyecta $PORT)
