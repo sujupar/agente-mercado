@@ -107,4 +107,39 @@ STRATEGIES: dict[str, StrategyConfig] = {
         max_concurrent_positions=3,
         max_trades_per_day=0,  # Sin límite — la IA no condiciona un trade por el anterior
     ),
+    "s4_turtle_breakout": StrategyConfig(
+        id="s4_turtle_breakout",
+        name="S4 — Turtle Breakout",
+        description=(
+            "Breakout de canal Donchian 20 períodos (Richard Dennis / Curtis Faith). "
+            "Compra al romper máximo de 20 períodos, vende al romper mínimo. "
+            "Filtro: skip si breakout anterior fue ganador. Stop: 2×ATR(20). "
+            "Exit: Donchian(10) inverso."
+        ),
+        signal_type="turtle_breakout",
+        direction="BOTH",
+        instruments=("EUR_USD", "GBP_USD", "USD_JPY"),
+        primary_timeframe="H4",
+        entry_timeframe="H4",
+        risk_per_trade_pct=0.01,
+        min_risk_reward=2.0,
+        max_concurrent_positions=3,
+    ),
+    "s5_connors_rsi2": StrategyConfig(
+        id="s5_connors_rsi2",
+        name="S5 — RSI(2) Connors",
+        description=(
+            "Mean reversion (Larry Connors): compra cuando RSI(2) < 10 en uptrend "
+            "(precio > SMA200), vende cuando RSI(2) > 90 en downtrend. "
+            "Salida: precio cruza SMA(5). Stop: 3×ATR(14). R:R mínimo 1:1.5."
+        ),
+        signal_type="connors_rsi2",
+        direction="BOTH",
+        instruments=("EUR_USD", "GBP_USD", "USD_JPY"),
+        primary_timeframe="H1",
+        entry_timeframe="H1",
+        risk_per_trade_pct=0.01,
+        min_risk_reward=1.5,
+        max_concurrent_positions=3,
+    ),
 }

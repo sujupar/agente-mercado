@@ -33,7 +33,9 @@ from app.signals.rule_engine import (
     ForexSignalGenerator,
     ImprovementRuleCheck,
 )
+from app.signals.connors.signal_engine import ConnorsSignalGenerator
 from app.signals.smc.signal_engine import SMCSignalGenerator
+from app.signals.turtle.signal_engine import TurtleSignalGenerator
 from app.strategies.registry import STRATEGIES
 
 log = logging.getLogger(__name__)
@@ -111,6 +113,10 @@ class ForexOrchestrator:
                         await self._run_smc_context(config, instruments_data)
                         continue
 
+                    if config.signal_type in ("turtle_breakout", "connors_rsi2"):
+                        # S4/S5: no usan contexto H1/H4 — análisis directo en entry cycle
+                        continue
+
                     # S1/S2: 8 filtros de contexto Oliver Vélez
                     improvement_rules = await self._load_improvement_rules(
                         session, strategy_id,
@@ -178,6 +184,15 @@ class ForexOrchestrator:
                     if config.signal_type == "smc_institutional":
                         # S3 SMC: usar BIAS cache + M5 entries
                         signals = await self._run_smc_entries(session, config)
+
+                    elif config.signal_type == "turtle_breakout":
+                        # S4 Turtle: breakout Donchian en H4
+                        signals = await self._run_turtle_entries(session, config)
+
+                    elif config.signal_type == "connors_rsi2":
+                        # S5 Connors: RSI(2) mean reversion en H1
+                        signals = await self._run_connors_entries(session, config)
+
                     else:
                         # S1/S2: usar context cache + M1 entries
                         context = self._context_cache.get(strategy_id, {})
@@ -322,6 +337,36 @@ class ForexOrchestrator:
         improvement_rules = await self._load_improvement_rules(session, config.id)
         generator = SMCSignalGenerator(config, improvement_rules)
         return generator.scan_entries(self._smc_bias_cache, entry_data, h1_data)
+
+    async def _run_turtle_entries(
+        self, session: AsyncSession, config: "StrategyConfig",
+    ) -> list[ForexSignal]:
+        """S4 Turtle: buscar breakouts Donchian(20) en H4."""
+        entry_data = await self._fetch_entry_candles(
+            list(config.instruments), config.entry_timeframe,
+        )
+        if not entry_data:
+            return []
+
+        # Track último breakout won/lost por instrumento
+        last_results = getattr(self, "_turtle_last_breakout", {})
+        improvement_rules = await self._load_improvement_rules(session, config.id)
+        generator = TurtleSignalGenerator(config, improvement_rules, last_results)
+        return generator.scan_entries(entry_data)
+
+    async def _run_connors_entries(
+        self, session: AsyncSession, config: "StrategyConfig",
+    ) -> list[ForexSignal]:
+        """S5 Connors: buscar RSI(2) extremos en H1."""
+        entry_data = await self._fetch_entry_candles(
+            list(config.instruments), config.entry_timeframe,
+        )
+        if not entry_data:
+            return []
+
+        improvement_rules = await self._load_improvement_rules(session, config.id)
+        generator = ConnorsSignalGenerator(config, improvement_rules)
+        return generator.scan_entries(entry_data)
 
     def _check_daily_trade_limit(self, strategy_id: str, config) -> bool:
         """Verifica si la estrategia ya alcanzó su límite diario de trades."""
