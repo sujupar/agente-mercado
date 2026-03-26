@@ -78,34 +78,37 @@ async def lifespan(app: FastAPI):
         except Exception:
             log.exception("Error en migración retroactiva de bitácora")
 
-    # Sembrar estrategias nuevas via SQL directo (más robusto)
-    async with engine.begin() as conn:
-        from sqlalchemy import text
-        for sid, config in STRATEGIES.items():
-            try:
-                result = await conn.execute(
-                    text("SELECT id FROM strategies WHERE id = :sid"),
-                    {"sid": sid},
-                )
-                if result.first() is None:
-                    log.info("Sembrando estrategia nueva: %s", sid)
-                    await conn.execute(
-                        text("""INSERT INTO strategies (id, name, description, enabled, params, status_text, llm_budget_fraction)
-                               VALUES (:id, :name, :desc, :enabled, :params, :status, :budget)"""),
-                        {"id": sid, "name": config.name, "desc": config.description,
-                         "enabled": config.enabled,
-                         "params": '{"signal_type": "' + config.signal_type + '", "direction": "' + config.direction + '"}',
-                         "status": "Activa — esperando señales",
-                         "budget": config.llm_budget_fraction},
+    # Sembrar estrategias nuevas via SQL directo
+    log.info("Verificando %d estrategias en registry...", len(STRATEGIES))
+    try:
+        async with engine.begin() as conn:
+            from sqlalchemy import text
+            for sid, config in STRATEGIES.items():
+                try:
+                    result = await conn.execute(
+                        text("SELECT id FROM strategies WHERE id = :sid"),
+                        {"sid": sid},
                     )
-                    await conn.execute(
-                        text("""INSERT INTO agent_state (strategy_id, mode, capital_usd, peak_capital_usd)
-                               VALUES (:sid, 'SIMULATION', :cap, :cap)"""),
-                        {"sid": sid, "cap": config.initial_capital_usd},
-                    )
-                    log.info("  Sembrada: %s", sid)
-            except Exception:
-                log.exception("Error sembrando %s", sid)
+                    if result.first() is None:
+                        log.info("Sembrando estrategia nueva: %s", sid)
+                        await conn.execute(
+                            text("INSERT INTO strategies (id, name, description, enabled, params, status_text, llm_budget_fraction) VALUES (:id, :name, :desc, true, :params, :status, :budget)"),
+                            {"id": sid, "name": config.name, "desc": config.description,
+                             "params": '{"signal_type": "' + config.signal_type + '"}',
+                             "status": "Activa — esperando señales",
+                             "budget": config.llm_budget_fraction},
+                        )
+                        await conn.execute(
+                            text("INSERT INTO agent_state (strategy_id, mode, capital_usd, peak_capital_usd) VALUES (:sid, 'SIMULATION', :cap, :cap)"),
+                            {"sid": sid, "cap": config.initial_capital_usd},
+                        )
+                        log.info("  Sembrada OK: %s", sid)
+                    else:
+                        log.info("  Ya existe: %s", sid)
+                except Exception:
+                    log.exception("Error sembrando %s", sid)
+    except Exception:
+        log.exception("Error en bloque de seeding")
 
     # Legacy seeding (DB vacía — primera ejecución)
     async with async_session_factory() as session:
