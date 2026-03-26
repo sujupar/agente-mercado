@@ -98,13 +98,13 @@ STRATEGIES: dict[str, StrategyConfig] = {
             "Smart Money Concepts: Order Blocks + BOS/ChoCH + Liquidity Sweeps. "
             "Metodología institucional inspirada en El Sensei. BIAS multi-timeframe "
             "(D1 > H4 > H1), entradas en M5 con OB + confirmación de estructura. "
-            "Máximo 1 trade por día. R:R mínimo 1:2."
+            "Sin límite diario (IA no tiene sesgo psicológico). R:R mínimo 1:2."
         ),
         signal_type="smc_institutional",
         direction="BOTH",
         instruments=("EUR_USD", "GBP_USD", "USD_JPY"),
         entry_timeframe="M5",
-        max_concurrent_positions=1,
-        max_trades_per_day=1,
+        max_concurrent_positions=3,
+        max_trades_per_day=0,  # Sin límite — la IA no condiciona un trade por el anterior
     ),
 }
