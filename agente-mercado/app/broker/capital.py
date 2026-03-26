@@ -21,6 +21,7 @@ _TIMEFRAME_MAP = {
     "H1": "HOUR",
     "H4": "HOUR_4",
     "D": "DAY",
+    "D1": "DAY",
     "W": "WEEK",
     # Aliases comunes
     "1m": "MINUTE",
