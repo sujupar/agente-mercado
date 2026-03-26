@@ -78,7 +78,33 @@ async def lifespan(app: FastAPI):
         except Exception:
             log.exception("Error en migración retroactiva de bitácora")
 
-    # Sembrar estrategias nuevas o faltantes
+    # Sembrar estrategias nuevas o faltantes (cada una en su propio bloque)
+    for sid, config in STRATEGIES.items():
+        try:
+            async with async_session_factory() as seed_session:
+                from sqlalchemy import select as sel
+                existing = await seed_session.execute(sel(Strategy).where(Strategy.id == sid))
+                if existing.scalar_one_or_none() is None:
+                    log.info("Sembrando estrategia nueva: %s", sid)
+                    seed_session.add(Strategy(
+                        id=config.id, name=config.name,
+                        description=config.description, enabled=config.enabled,
+                        params={"signal_type": config.signal_type, "direction": config.direction,
+                                "instruments": list(config.instruments)},
+                        status_text="Activa — esperando señales",
+                        llm_budget_fraction=config.llm_budget_fraction,
+                    ))
+                    seed_session.add(AgentState(
+                        strategy_id=config.id, mode="SIMULATION",
+                        capital_usd=config.initial_capital_usd,
+                        peak_capital_usd=config.initial_capital_usd,
+                    ))
+                    await seed_session.commit()
+                    log.info("  OK: %s sembrada", sid)
+        except Exception:
+            log.exception("Error sembrando estrategia %s", sid)
+
+    # Legacy seeding (mantener por compatibilidad)
     async with async_session_factory() as session:
         from sqlalchemy import select, func
         result = await session.execute(select(func.count(Strategy.id)))
