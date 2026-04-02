@@ -29,7 +29,8 @@ OVERLAP = TradingSession(name="London-NY Overlap", start_hour_utc=12, end_hour_u
 TOKYO = TradingSession(name="Tokyo", start_hour_utc=0, end_hour_utc=9, strength=1)
 
 # Sesiones en las que permitimos nuevas entradas
-TRADING_SESSIONS = [LONDON, NEW_YORK]
+# Incluye Tokyo para cubrir mercado asiático (S3/S4/S5 operan todas las sesiones)
+TRADING_SESSIONS = [TOKYO, LONDON, NEW_YORK]
 
 
 def is_trading_session(

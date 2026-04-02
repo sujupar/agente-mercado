@@ -23,7 +23,7 @@ from app.config import settings
 from app.db.database import async_session_factory
 from app.db.models import AgentState, Bitacora, Signal, Trade
 from app.forex.instruments import calculate_position_size, get_stepped_risk_base, is_spread_acceptable
-from app.forex.sessions import get_current_session, is_forex_market_open, is_trading_session
+from app.forex.sessions import get_current_session, is_forex_market_open
 from app.learning.bitacora_engine import BitacoraEngine
 from app.learning.improvement_engine import ImprovementEngine
 from app.llm.gemini import GeminiClient
@@ -68,6 +68,10 @@ class ForexOrchestrator:
         # Trades hoy por estrategia (para max_trades_per_day)
         self._trades_today: dict[str, int] = {}
         self._trades_today_date: str = ""
+
+        # Cache de candles por timeframe (evita re-fetch H4 cada minuto)
+        self._entry_candle_cache: dict[str, dict[str, list[Candle]]] = {}
+        self._entry_candle_cache_at: datetime | None = None
 
     # ── Ciclo legacy (wrapper) ─────────────────────────────────
 
@@ -151,16 +155,9 @@ class ForexOrchestrator:
         if not is_forex_market_open():
             return
 
-        if not is_trading_session():
-            log.debug("Fuera de sesión de trading — solo gestión de posiciones")
-            # Gestionar posiciones incluso fuera de sesión
-            try:
-                async with async_session_factory() as session:
-                    await self._manage_positions(session)
-                    await session.commit()
-            except Exception:
-                log.exception("Error gestionando posiciones")
-            return
+        # Gestionar posiciones siempre que el mercado esté abierto
+        # Generar señales en cualquier sesión (Tokyo, London, NY)
+        # La IA no tiene sesgo psicológico — opera todas las sesiones
 
         # Si no hay cache o es muy viejo, refrescar contexto primero
         if self._context_needs_refresh():
@@ -178,11 +175,24 @@ class ForexOrchestrator:
                     if config.enabled for inst in config.instruments
                 ))
                 candle_cache: dict[str, dict[str, list[Candle]]] = {}
+                now = datetime.now(timezone.utc)
+                cache_age = (
+                    (now - self._entry_candle_cache_at).total_seconds()
+                    if self._entry_candle_cache_at else 9999
+                )
                 for tf in ("M1", "M5", "H1", "H4"):
                     needed = [i for i in all_instruments
                               if any(c.entry_timeframe == tf and c.enabled for c in STRATEGIES.values())]
-                    if needed:
+                    if not needed:
+                        continue
+                    # H4 solo cambia cada 4h — cachear 15 min
+                    if tf == "H4" and cache_age < 900 and "H4" in self._entry_candle_cache:
+                        candle_cache[tf] = self._entry_candle_cache["H4"]
+                    else:
                         candle_cache[tf] = await self._fetch_entry_candles(needed, tf)
+                        if tf == "H4":
+                            self._entry_candle_cache["H4"] = candle_cache[tf]
+                            self._entry_candle_cache_at = now
 
                 # Buscar entradas para cada estrategia
                 total_trades = 0
@@ -401,9 +411,12 @@ class ForexOrchestrator:
         """Fetch candles de entrada solo para instrumentos que pasaron contexto."""
         result: dict[str, list[Candle]] = {}
 
+        # H1/H4 necesitan 250 candles (S5 Connors usa SMA200)
+        count = 250 if entry_timeframe in ("H1", "H4") else 100
+
         for instrument in instruments:
             try:
-                candles = await self._broker.get_candles(instrument, entry_timeframe, 100)
+                candles = await self._broker.get_candles(instrument, entry_timeframe, count)
                 if candles:
                     result[instrument] = candles
                 await asyncio.sleep(0.3)  # Rate limit Capital.com
@@ -716,7 +729,7 @@ class ForexOrchestrator:
         return True
 
     async def _manage_positions(self, session: AsyncSession) -> None:
-        """Gestiona posiciones abiertas: break-even, parciales, trailing, sync."""
+        """Gestiona posiciones abiertas: break-even, trailing, EOD close, sync."""
         try:
             broker_positions = await self._broker.get_positions()
         except Exception:
@@ -736,17 +749,59 @@ class ForexOrchestrator:
                 # Trade cerrado en broker (TP/SL hit) — sincronizar
                 await self._sync_closed_trade(session, db_trade)
 
-        # Para posiciones abiertas: gestionar break-even y trailing
+        # End-of-day: cerrar TODO a las 20:45 UTC (day trading)
+        now = datetime.now(timezone.utc)
+        is_eod = now.hour == 20 and now.minute >= 45
+
+        # Para posiciones abiertas: gestionar trailing, EOD close
         for position in broker_positions:
             if position.trade_id not in db_trades:
-                # Adoptar posición huérfana del broker
                 db_trade = await self._adopt_broker_position(session, position)
-                if db_trade:
-                    await self._manage_single_position(session, db_trade, position)
+                if not db_trade:
+                    continue
+            else:
+                db_trade = db_trades[position.trade_id]
+
+            # EOD close: cerrar todas las posiciones antes del cierre NY
+            if is_eod:
+                await self._close_position_eod(session, db_trade, position)
                 continue
 
-            db_trade = db_trades[position.trade_id]
             await self._manage_single_position(session, db_trade, position)
+
+    async def _close_position_eod(
+        self, session: AsyncSession, trade: Trade, position,
+    ) -> None:
+        """Cierre end-of-day — day trading puro."""
+        result = await self._broker.close_trade(position.trade_id)
+        if result.success:
+            trade.status = "CLOSED"
+            trade.closed_at = datetime.now(timezone.utc)
+            trade.exit_price = result.fill_price or position.entry_price
+            trade.exit_reason = "EOD"
+
+            # P&L
+            if trade.direction == "BUY":
+                trade.pnl = (trade.exit_price - trade.entry_price) * trade.quantity
+            else:
+                trade.pnl = (trade.entry_price - trade.exit_price) * trade.quantity
+
+            if trade.instrument and "_JPY" in trade.instrument:
+                trade.pnl = trade.pnl / trade.exit_price
+
+            state = await self._ensure_state(session, trade.strategy_id)
+            state.positions_open = max(0, state.positions_open - 1)
+            state.total_pnl += trade.pnl or 0
+            if (trade.pnl or 0) >= 0:
+                state.trades_won += 1
+            else:
+                state.trades_lost += 1
+
+            log.info(
+                "[%s] EOD close: %s %s exit=%.5f pnl=%.2f",
+                trade.strategy_id, trade.direction, trade.instrument,
+                trade.exit_price, trade.pnl or 0,
+            )
 
     async def _manage_single_position(
         self,
@@ -754,33 +809,65 @@ class ForexOrchestrator:
         trade: Trade,
         position,
     ) -> None:
-        """Gestiona una posición individual: break-even, parciales."""
+        """Gestiona una posición: break-even at 1R + trailing stop."""
         entry = trade.entry_price
         initial_stop = trade.initial_stop_price or trade.stop_loss_price
         stop_distance = abs(entry - initial_stop)
 
-        if stop_distance <= 0:
+        if stop_distance <= 0 or position.units == 0:
             return
 
-        # Break-even at 1R
-        if trade.partial_exits == 0:
-            current_price_vs_entry = (
-                (position.unrealized_pnl > 0 and abs(position.unrealized_pnl) / abs(position.units) >= stop_distance)
-                if position.units != 0 else False
-            )
+        # Calcular profit en unidades de precio (por unidad)
+        profit_per_unit = abs(position.unrealized_pnl) / abs(position.units) if position.unrealized_pnl > 0 else 0
 
-            if current_price_vs_entry and position.stop_loss != entry:
-                # Mover stop a break-even
-                result = await self._broker.modify_trade(
-                    trade_id=position.trade_id,
-                    stop_loss=entry,
+        is_long = trade.direction == "BUY"
+        current_sl = position.stop_loss or trade.stop_loss_price
+
+        # Fase 1: Break-even at 1R
+        if profit_per_unit >= stop_distance and current_sl < entry if is_long else current_sl > entry:
+            result = await self._broker.modify_trade(
+                trade_id=position.trade_id,
+                stop_loss=entry,
+            )
+            if result.success:
+                trade.stop_loss_price = entry
+                log.info(
+                    "[%s] Break-even: %s %s SL→%.5f",
+                    trade.strategy_id, trade.direction, trade.instrument, entry,
                 )
-                if result.success:
-                    trade.stop_loss_price = entry
-                    log.info(
-                        "[%s] Break-even activado para %s %s",
-                        trade.strategy_id, trade.direction, trade.instrument,
+            return
+
+        # Fase 2: Trailing stop at 2R+ (trail con 1R de distancia)
+        if profit_per_unit >= stop_distance * 2:
+            if is_long:
+                # Trail: entry + (profit - 1R)
+                new_sl = entry + (profit_per_unit - stop_distance)
+                if new_sl > current_sl + stop_distance * 0.1:  # Solo mover si avanza al menos 0.1R
+                    result = await self._broker.modify_trade(
+                        trade_id=position.trade_id,
+                        stop_loss=new_sl,
                     )
+                    if result.success:
+                        trade.stop_loss_price = new_sl
+                        log.info(
+                            "[%s] Trailing: %s %s SL→%.5f (profit=%.1fR)",
+                            trade.strategy_id, trade.direction, trade.instrument,
+                            new_sl, profit_per_unit / stop_distance,
+                        )
+            else:
+                new_sl = entry - (profit_per_unit - stop_distance)
+                if new_sl < current_sl - stop_distance * 0.1:
+                    result = await self._broker.modify_trade(
+                        trade_id=position.trade_id,
+                        stop_loss=new_sl,
+                    )
+                    if result.success:
+                        trade.stop_loss_price = new_sl
+                        log.info(
+                            "[%s] Trailing: %s %s SL→%.5f (profit=%.1fR)",
+                            trade.strategy_id, trade.direction, trade.instrument,
+                            new_sl, profit_per_unit / stop_distance,
+                        )
 
     async def _sync_closed_trade(self, session: AsyncSession, trade: Trade) -> None:
         """Sincroniza un trade que fue cerrado en el broker — calcula P&L."""

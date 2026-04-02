@@ -120,9 +120,9 @@ class TurtleSignalGenerator:
             )
 
         # Sin breakout
-        log.debug(
-            "[%s] %s: precio %.5f dentro de Donchian [%.5f - %.5f]",
-            self._config.id, instrument, current.close, dc20.lower, dc20.upper,
+        log.info(
+            "[%s] %s: precio %.5f dentro de Donchian [%.5f - %.5f] (%d candles)",
+            self._config.id, instrument, current.close, dc20.lower, dc20.upper, len(candles),
         )
         return None
 

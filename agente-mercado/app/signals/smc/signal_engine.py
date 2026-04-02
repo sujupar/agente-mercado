@@ -10,7 +10,7 @@ Pipeline multi-timeframe:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone  # noqa: F401
 
 from app.broker.models import Candle
 from app.forex.instruments import get_buffer_price
@@ -64,17 +64,22 @@ class SMCSignalGenerator:
             bias_h4 = self._structure.get_bias(candles_h4) if len(candles_h4) >= 20 else "NEUTRAL"
             bias_h1 = self._structure.get_bias(candles_h1) if len(candles_h1) >= 20 else "NEUTRAL"
 
-            # BIAS final: D1 tiene prioridad, H4 y H1 confirman
+            # BIAS final: D1 tiene prioridad, luego H4, luego H1
+            # Relajado: no requiere confirmación estricta — basta con que el TF mayor tenga dirección
             if bias_d1 != "NEUTRAL":
-                # Si D1 tiene dirección, necesitamos al menos 1 confirmación
-                confirmations = sum(1 for b in [bias_h4, bias_h1] if b == bias_d1)
-                if confirmations >= 1:
+                # D1 manda — si al menos H4 o H1 no contradicen, usar D1
+                contradictions = sum(1 for b in [bias_h4, bias_h1]
+                                     if b != "NEUTRAL" and b != bias_d1)
+                if contradictions < 2:  # Máximo 1 contradicción permitida
                     final_bias = bias_d1
                 else:
                     final_bias = "NEUTRAL"
             elif bias_h4 != "NEUTRAL":
-                # Sin D1 claro, usar H4 + H1
-                final_bias = bias_h4 if bias_h1 == bias_h4 else "NEUTRAL"
+                # Sin D1, H4 + H1 (o solo H4 si H1 neutral)
+                final_bias = bias_h4 if bias_h1 in (bias_h4, "NEUTRAL") else "NEUTRAL"
+            elif bias_h1 != "NEUTRAL":
+                # Solo H1 disponible
+                final_bias = bias_h1
             else:
                 final_bias = "NEUTRAL"
 
@@ -107,10 +112,12 @@ class SMCSignalGenerator:
 
         for instrument, bias in bias_results.items():
             if bias == "NEUTRAL":
+                log.info("[%s] %s: BIAS=NEUTRAL — skipping", self._config.id, instrument)
                 continue
 
             candles = entry_data.get(instrument, [])
             if len(candles) < 30:
+                log.info("[%s] %s: solo %d candles M5 (min 30)", self._config.id, instrument, len(candles))
                 continue
 
             signal = self._analyze_instrument(instrument, bias, candles, h1_data)
@@ -132,7 +139,7 @@ class SMCSignalGenerator:
         # 1. Estructura en M5
         structure = self._structure.identify_structure(candles)
         if len(structure) < 3:
-            log.debug("[%s] %s: estructura insuficiente en M5", self._config.id, instrument)
+            log.info("[%s] %s: estructura insuficiente en M5 (%d puntos)", self._config.id, instrument, len(structure))
             return None
 
         # 2. Detectar rupturas de estructura

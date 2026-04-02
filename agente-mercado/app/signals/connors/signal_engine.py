@@ -56,6 +56,10 @@ class ConnorsSignalGenerator:
             if instrument not in self._config.instruments:
                 continue
             if len(candles) < SMA_TREND_PERIOD + 5:
+                log.info(
+                    "[%s] %s: solo %d candles H1 (min %d para SMA200)",
+                    self._config.id, instrument, len(candles), SMA_TREND_PERIOD + 5,
+                )
                 continue
 
             signal = self._check_rsi_extreme(instrument, candles)
@@ -123,10 +127,11 @@ class ConnorsSignalGenerator:
             )
 
         # Sin señal — log periódico del RSI(2)
-        log.debug(
-            "[%s] %s: RSI(2)=%.1f sma200=%s price=%.5f",
+        log.info(
+            "[%s] %s: RSI(2)=%.1f sma200=%s price=%.5f (need <%d or >%d)",
             self._config.id, instrument, rsi_value,
             "ABOVE" if above_sma200 else "BELOW", current_price,
+            RSI_OVERSOLD, RSI_OVERBOUGHT,
         )
         return None
 
