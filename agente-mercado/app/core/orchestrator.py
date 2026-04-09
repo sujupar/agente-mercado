@@ -1167,13 +1167,14 @@ class ForexOrchestrator:
         # Paso 2: Check por tupla (instrument, direction, entry_price ± 0.0001)
         # Esto captura el caso donde el broker cambia el dealId pero es
         # la misma posición lógica. Tolerancia 0.0001 = 1 pip en forex mayor.
+        # Usa .first() porque puede haber múltiples duplicados de la DB vieja.
         result = await session.execute(
             select(Trade).where(
                 Trade.instrument == position.instrument,
                 Trade.direction == direction_db,
                 Trade.status == "OPEN",
                 func.abs(Trade.entry_price - position.entry_price) < 0.0001,
-            )
+            ).order_by(Trade.created_at.desc()).limit(1)
         )
         existing_match = result.scalar_one_or_none()
         if existing_match:
