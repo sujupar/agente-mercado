@@ -183,7 +183,7 @@ async def start_scheduler() -> None:
     )
 
     # Job 5: Análisis de régimen macro (LLM overlay) — cada 60 min
-    # Corre al arrancar (next_run_time en 30s) para no esperar 1h al cold start
+    # Corre al arrancar (next_run_time en 90s para dar tiempo al broker auth)
     from datetime import datetime as _dt, timedelta as _td
     _scheduler.add_job(
         _run_regime_analysis,
@@ -192,7 +192,8 @@ async def start_scheduler() -> None:
         name="Análisis de régimen macro (LLM, cada 60 min)",
         replace_existing=True,
         max_instances=1,
-        next_run_time=_dt.now() + _td(seconds=30),
+        misfire_grace_time=120,  # Permite ejecutar hasta 2 min tarde
+        next_run_time=_dt.now() + _td(seconds=90),  # 90s da tiempo al broker auth
     )
 
     _scheduler.start()
