@@ -14,7 +14,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import BrokerInterface
@@ -29,6 +29,7 @@ from app.learning.improvement_engine import ImprovementEngine
 from app.llm.gemini import GeminiClient
 from app.notifications.telegram import TelegramNotifier
 from app.services.economic_calendar import EconomicCalendarService
+from app.services.macro_regime import MacroRegimeAnalyzer
 from app.services.vision_validator import VisionValidator
 from app.signals.rule_engine import (
     ContextResult,
@@ -80,6 +81,13 @@ class ForexOrchestrator:
 
         # Validador visual de entradas (opcional, controlado por settings)
         self._vision_validator = VisionValidator()
+
+        # Analizador de régimen macro (LLM como overlay, NO como decisor)
+        # Corre cada 60 min por el scheduler; lee cacheado en cada entry cycle
+        self._regime_analyzer = MacroRegimeAnalyzer(
+            broker=self._broker,
+            economic_calendar=self._economic_calendar,
+        )
 
     # ── Ciclo legacy (wrapper) ─────────────────────────────────
 
@@ -213,6 +221,14 @@ class ForexOrchestrator:
             )
             await self.run_context_cycle()
 
+        # Lee régimen macro cacheado (NO llama LLM aquí — lo hace el scheduler cada 60 min)
+        regime = self._regime_analyzer.get_current_regime()
+        log.info(
+            "Entry cycle | Regime: %s (conf=%.2f) mult=%.2f strategies=%s",
+            regime.regime, regime.confidence, regime.risk_multiplier,
+            regime.active_strategies or [],
+        )
+
         try:
             async with async_session_factory() as session:
                 # Gestionar posiciones abiertas
@@ -251,6 +267,23 @@ class ForexOrchestrator:
 
                     # Check daily trade limit
                     if self._check_daily_trade_limit(strategy_id, config):
+                        continue
+
+                    # Regime overlay: skip si la estrategia no está activa en este régimen
+                    # Si active_strategies está vacío, el LLM considera que nada debe operar
+                    # (ej: UNCLEAR con baja confidence)
+                    if self._regime_analyzer.enabled and regime.active_strategies:
+                        if strategy_id not in regime.active_strategies:
+                            log.debug(
+                                "[%s] Skip: no activa en régimen %s",
+                                strategy_id, regime.regime,
+                            )
+                            continue
+                    elif self._regime_analyzer.enabled and not regime.active_strategies:
+                        log.debug(
+                            "[%s] Skip: régimen %s sin estrategias activas",
+                            strategy_id, regime.regime,
+                        )
                         continue
 
                     try:
@@ -589,14 +622,23 @@ class ForexOrchestrator:
             log.exception("Error obteniendo cuenta del broker")
             return False
 
-        # 2. Verificar límites
-        open_positions = await self._broker.get_positions()
+        # 2. Verificar límites POR ESTRATEGIA (no global del broker)
+        # Antes contaba todas las posiciones del broker — eso bloqueaba
+        # a S3/S4/S5 cuando S1/S2 ya tenían sus posiciones abiertas.
         strategy_config = STRATEGIES[strategy_id]
 
-        if len(open_positions) >= strategy_config.max_concurrent_positions:
+        open_count_result = await session.execute(
+            select(func.count(Trade.id)).where(
+                Trade.strategy_id == strategy_id,
+                Trade.status == "OPEN",
+            )
+        )
+        strategy_open_count = open_count_result.scalar() or 0
+
+        if strategy_open_count >= strategy_config.max_concurrent_positions:
             log.info(
-                "[%s] Máximo de posiciones alcanzado (%d/%d)",
-                strategy_id, len(open_positions), strategy_config.max_concurrent_positions,
+                "[%s] Máximo por estrategia alcanzado (%d/%d)",
+                strategy_id, strategy_open_count, strategy_config.max_concurrent_positions,
             )
             return False
 
@@ -638,10 +680,18 @@ class ForexOrchestrator:
             )
 
         stop_distance = abs(signal.entry_price - signal.stop_price)
+
+        # Modular el risk por el régimen macro (LLM overlay)
+        # risk_multiplier = 1.0 es neutral (no cambio)
+        # < 1.0 reduce exposure (ej. UNCLEAR, TRANSITION, baja confidence)
+        # > 1.0 aumenta exposure (ej. RISK_ON o RISK_OFF con alta confidence)
+        regime = self._regime_analyzer.get_current_regime()
+        effective_risk_pct = strategy_config.risk_per_trade_pct * regime.risk_multiplier
+
         units = calculate_position_size(
             instrument=signal.instrument,
             account_balance=risk_base,
-            risk_pct=strategy_config.risk_per_trade_pct,
+            risk_pct=effective_risk_pct,
             stop_distance_price=stop_distance,
             current_price=price.mid,
         )
@@ -689,7 +739,7 @@ class ForexOrchestrator:
         await session.flush()
 
         # 7. Calcular datos técnicos de entrada
-        risk_amount = risk_base * strategy_config.risk_per_trade_pct
+        risk_amount = risk_base * effective_risk_pct
 
         # EMA20 distance en ATR
         ema20_dist_atr = None
@@ -1091,21 +1141,59 @@ class ForexOrchestrator:
     async def _adopt_broker_position(
         self, session: AsyncSession, position,
     ) -> Trade | None:
-        """Crea un Trade local para una posición del broker sin registro en DB."""
-        # Verificar que no exista ya (protección contra duplicados)
+        """Crea un Trade local para una posición del broker sin registro en DB.
+
+        Deduplicación robusta: Capital.com puede cambiar el dealId de una
+        misma posición lógica (cada modificación interna genera nuevo ID).
+        Por eso verificamos en 2 pasos:
+        1. Por broker_trade_id exacto (caso ideal)
+        2. Por (instrument, direction, entry_price±tolerance) si #1 falla
+        """
+        direction_db = "BUY" if position.direction == "LONG" else "SELL"
+
+        # Paso 1: Check exacto por broker_trade_id
         result = await session.execute(
-            select(Trade).where(Trade.broker_trade_id == position.trade_id)
+            select(Trade).where(
+                Trade.broker_trade_id == position.trade_id,
+                Trade.status == "OPEN",
+            )
         )
         existing = result.scalar_one_or_none()
         if existing:
             return existing
 
-        # Determinar estrategia por dirección
+        # Paso 2: Check por tupla (instrument, direction, entry_price ± 0.0001)
+        # Esto captura el caso donde el broker cambia el dealId pero es
+        # la misma posición lógica. Tolerancia 0.0001 = 1 pip en forex mayor.
+        result = await session.execute(
+            select(Trade).where(
+                Trade.instrument == position.instrument,
+                Trade.direction == direction_db,
+                Trade.status == "OPEN",
+                func.abs(Trade.entry_price - position.entry_price) < 0.0001,
+            )
+        )
+        existing_match = result.scalar_one_or_none()
+        if existing_match:
+            # Misma posición, pero el broker cambió el dealId.
+            # Actualizamos el broker_trade_id y los niveles actuales de SL/TP.
+            existing_match.broker_trade_id = position.trade_id
+            if position.stop_loss:
+                existing_match.stop_loss_price = position.stop_loss
+            if position.take_profit:
+                existing_match.take_profit_price = position.take_profit
+            log.debug(
+                "[%s] Broker_trade_id actualizado: %s (entry=%.5f)",
+                existing_match.strategy_id, position.trade_id, position.entry_price,
+            )
+            return existing_match
+
+        # Paso 3: Realmente es una posición nueva — crear Trade
+        # Determinar estrategia por dirección (heurística, mejor que nada)
         strategy_id = (
             "s1_pullback_20_up" if position.direction == "LONG"
             else "s2_pullback_20_down"
         )
-        direction_db = "BUY" if position.direction == "LONG" else "SELL"
         size_usd = abs(position.units) * position.entry_price
 
         trade = Trade(

@@ -13,6 +13,7 @@ import {
 } from '@heroicons/react/24/outline';
 
 import { SimulationControls } from './components/SimulationControls';
+import { RegimeBanner } from './components/RegimeBanner';
 import { CapitalBreakdown } from './components/Dashboard/CapitalBreakdown';
 import { StatsCards } from './components/Dashboard/StatsCards';
 import { TradesTable } from './components/Dashboard/TradesTable';
@@ -228,6 +229,9 @@ function DashboardContent() {
           </div>
         </div>
       </header>
+
+      {/* Macro Regime Banner (solo visible si el LLM analyzer está habilitado) */}
+      <RegimeBanner />
 
       {/* Desktop Tab Navigation (hidden on mobile) */}
       <div className="hidden md:block sticky top-16 z-40 bg-gray-950/90 backdrop-blur-xl border-b border-gray-800/30">

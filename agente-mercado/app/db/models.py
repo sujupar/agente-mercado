@@ -371,3 +371,33 @@ class ImprovementRule(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class RegimeHistory(Base):
+    """Histórico del régimen macro detectado por MacroRegimeAnalyzer.
+
+    Se persiste un registro cada vez que el analyzer corre (cada 60 min).
+    Permite análisis retrospectivo: correlacionar régimen con PnL de trades
+    que ocurrieron durante ese período.
+    """
+
+    __tablename__ = "regime_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True, server_default=func.now()
+    )
+
+    # RISK_ON | RISK_OFF | TRANSITION | UNCLEAR
+    regime: Mapped[str] = mapped_column(String(32))
+    confidence: Mapped[float] = mapped_column(Float)
+    reasoning: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # Lista de strategy_ids que el LLM activó en este régimen
+    active_strategies: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    # Multiplicador de risk_per_trade_pct (0.0-1.5)
+    risk_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+
+    # Datos de input (para debugging/auditing)
+    input_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)

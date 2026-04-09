@@ -127,6 +127,17 @@ async def _run_broker_balance_sync():
         log.exception("Error en sync de broker balance")
 
 
+async def _run_regime_analysis():
+    """Analiza el régimen macro cada 60 min (LLM overlay)."""
+    orch = _ensure_orchestrator()
+    if orch is None:
+        return
+    try:
+        await orch._regime_analyzer.analyze()
+    except Exception:
+        log.exception("Error en análisis de régimen macro")
+
+
 async def start_scheduler() -> None:
     global _scheduler
     _scheduler = AsyncIOScheduler()
@@ -171,10 +182,23 @@ async def start_scheduler() -> None:
         max_instances=1,
     )
 
+    # Job 5: Análisis de régimen macro (LLM overlay) — cada 60 min
+    # Corre al arrancar (next_run_time en 30s) para no esperar 1h al cold start
+    from datetime import datetime as _dt, timedelta as _td
+    _scheduler.add_job(
+        _run_regime_analysis,
+        trigger=IntervalTrigger(minutes=60),
+        id="regime_analysis",
+        name="Análisis de régimen macro (LLM, cada 60 min)",
+        replace_existing=True,
+        max_instances=1,
+        next_run_time=_dt.now() + _td(seconds=30),
+    )
+
     _scheduler.start()
     log.info(
         "Scheduler Forex iniciado: broker=%s | contexto=15min | entradas=1min | "
-        "pos_sync=30seg | balance_sync=5min",
+        "pos_sync=30seg | balance_sync=5min | regime=60min",
         settings.broker_provider,
     )
 

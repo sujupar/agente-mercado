@@ -52,7 +52,7 @@ from app.broker.base import BrokerInterface
 from app.config import settings
 from app.core.state import StateManager
 from app.db.database import get_session
-from app.db.models import AgentState, Bitacora, BrokerSyncLog, CostLog, ImprovementCycle, LearningLog, LearningReport, Signal, Strategy, Trade
+from app.db.models import AgentState, Bitacora, BrokerSyncLog, CostLog, ImprovementCycle, LearningLog, LearningReport, RegimeHistory, Signal, Strategy, Trade
 from app.forex.sessions import get_current_session, is_forex_market_open, is_trading_session
 from app.learning.adaptive import AdaptiveFilter
 from app.learning.improvement_engine import ImprovementEngine
@@ -1683,4 +1683,66 @@ async def reset_simulation(session: AsyncSession = Depends(get_session)):
     await session.commit()
 
     return {"status": "ok", "message": f"Reseteado con balance real del broker: ${balance:.2f}"}
+
+
+# ── Macro Regime (LLM overlay) ─────────────────────────────
+
+@router.get("/regime/current")
+async def get_current_regime():
+    """Retorna el régimen macro actual cacheado en memoria.
+
+    El régimen se actualiza cada 60 min vía scheduler job. Este endpoint
+    NO dispara análisis nuevo — solo lee el cache.
+    """
+    from app.core.scheduler import _ensure_orchestrator
+    orch = _ensure_orchestrator()
+    if orch is None:
+        return {
+            "regime": "UNCLEAR",
+            "confidence": 0.0,
+            "reasoning": "Orchestrator no inicializado",
+            "active_strategies": [],
+            "risk_multiplier": 0.0,
+            "analyzed_at": None,
+            "enabled": False,
+        }
+    regime = orch._regime_analyzer.get_current_regime()
+    return {
+        "regime": regime.regime,
+        "confidence": regime.confidence,
+        "reasoning": regime.reasoning,
+        "active_strategies": regime.active_strategies,
+        "risk_multiplier": regime.risk_multiplier,
+        "analyzed_at": regime.analyzed_at.isoformat() if regime.analyzed_at else None,
+        "enabled": orch._regime_analyzer.enabled,
+    }
+
+
+@router.get("/regime/history")
+async def get_regime_history(
+    hours: int = 48,
+    session: AsyncSession = Depends(get_session),
+):
+    """Retorna el histórico del régimen macro de las últimas N horas."""
+    from datetime import timedelta as _td
+    cutoff = datetime.now(timezone.utc) - _td(hours=hours)
+    result = await session.execute(
+        select(RegimeHistory)
+        .where(RegimeHistory.timestamp >= cutoff)
+        .order_by(RegimeHistory.timestamp.desc())
+        .limit(500)
+    )
+    records = result.scalars().all()
+    return [
+        {
+            "id": r.id,
+            "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+            "regime": r.regime,
+            "confidence": r.confidence,
+            "reasoning": r.reasoning,
+            "active_strategies": r.active_strategies or [],
+            "risk_multiplier": r.risk_multiplier,
+        }
+        for r in records
+    ]
 

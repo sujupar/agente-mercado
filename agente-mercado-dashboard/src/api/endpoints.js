@@ -34,6 +34,19 @@ export const api = {
    */
   status: () => apiClient.get('/status'),
 
+  /**
+   * Régimen macro actual (LLM overlay)
+   * @returns {Promise} { regime, confidence, reasoning, active_strategies, risk_multiplier, enabled }
+   */
+  getCurrentRegime: () => apiClient.get('/regime/current'),
+
+  /**
+   * Histórico del régimen macro
+   * @param {number} hours - Horas hacia atrás (default 48)
+   * @returns {Promise} Array de registros de régimen
+   */
+  getRegimeHistory: (hours = 48) => apiClient.get('/regime/history', { params: { hours } }),
+
   // ==========================================
   // TRADES (OPERACIONES)
   // ==========================================
