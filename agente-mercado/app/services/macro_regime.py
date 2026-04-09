@@ -1,9 +1,8 @@
 """Analizador de régimen macro — LLM como overlay sobre estrategias cuánticas.
 
-Cada 60 min, usa Claude Sonnet para analizar:
+Cada 60 min, usa un LLM (Gemini o Claude) para analizar:
 - Velas H4 de los pares principales (EUR_USD, GBP_USD, USD_JPY, XAU_USD)
 - Próximos eventos del calendario económico 24h
-- Cross-asset prices (si están disponibles en el broker)
 
 Output: clasificación de régimen que modula sizing/activación de S1-S5.
 
@@ -11,6 +10,12 @@ FILOSOFÍA: El LLM NO elige trades. Solo responde "¿qué régimen estamos en?".
 Esto respeta las capacidades únicas de los LLMs (razonamiento sobre texto,
 síntesis cross-asset) y evita sus debilidades (predicción numérica,
 consistencia, hallucination en patrones técnicos).
+
+PROVIDERS soportados:
+- Gemini (preferido): usa el GeminiClient ya configurado en el sistema,
+  comparte budget y rate limits con bitácora/improvement cycles.
+- Claude (opcional): fallback si ANTHROPIC_API_KEY está seteada.
+- Default_unclear: si ninguno disponible, modo conservador.
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ from typing import Literal
 from app.config import settings
 from app.db.database import async_session_factory
 from app.db.models import RegimeHistory
+from app.llm.gemini import GeminiClient
 from app.services.economic_calendar import EconomicCalendarService
 
 log = logging.getLogger(__name__)
@@ -135,28 +141,66 @@ Responde SOLO con JSON válido. NO añadas texto antes o después. NO uses code 
 }}
 """
 
-    def __init__(self, broker, economic_calendar: EconomicCalendarService) -> None:
+    def __init__(
+        self,
+        broker,
+        economic_calendar: EconomicCalendarService,
+        gemini_client: GeminiClient | None = None,
+    ) -> None:
         self._broker = broker
         self._calendar = economic_calendar
-        self._client = None
         self._cache: RegimeAnalysis | None = None
-        self._enabled = bool(settings.anthropic_api_key)
 
-    def _get_client(self):
-        if self._client is not None:
-            return self._client
+        # Provider preference: Gemini > Claude > disabled
+        # Gemini: ya tiene GEMINI_API_KEY configurada en Railway, comparte
+        #         budget con bitácora/improvement cycles, más barato.
+        # Claude: fallback opcional si ANTHROPIC_API_KEY está seteada.
+        self._gemini = gemini_client  # puede reutilizarse el instance del orchestrator
+        self._anthropic_client = None
+
+        self._provider = self._select_provider()
+        self._enabled = self._provider != "none"
+
+        if self._enabled:
+            log.info("MacroRegimeAnalyzer provider: %s", self._provider)
+
+    def _select_provider(self) -> str:
+        """Selecciona el mejor LLM provider disponible."""
+        if settings.gemini_api_key:
+            return "gemini"
+        if settings.anthropic_api_key:
+            return "anthropic"
+        return "none"
+
+    def _get_gemini(self) -> GeminiClient | None:
+        """Devuelve el cliente Gemini (crea uno propio si no fue inyectado)."""
+        if self._gemini is None:
+            try:
+                self._gemini = GeminiClient()
+            except Exception:
+                log.exception("Error creando GeminiClient")
+                return None
+        return self._gemini
+
+    def _get_anthropic(self):
+        """Devuelve el cliente Anthropic (lazy init)."""
+        if self._anthropic_client is not None:
+            return self._anthropic_client
         try:
             from anthropic import AsyncAnthropic
-            self._client = AsyncAnthropic(api_key=settings.anthropic_api_key)
-            return self._client
+            self._anthropic_client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+            return self._anthropic_client
         except ImportError:
-            log.error("anthropic SDK no instalado — regime analyzer disabled")
-            self._enabled = False
+            log.error("anthropic SDK no instalado — disabling Claude provider")
             return None
 
     @property
     def enabled(self) -> bool:
         return self._enabled
+
+    @property
+    def provider(self) -> str:
+        return self._provider
 
     def get_current_regime(self) -> RegimeAnalysis:
         """Retorna el régimen cacheado (sync, rápido).
@@ -181,7 +225,7 @@ Responde SOLO con JSON válido. NO añadas texto antes o después. NO uses code 
         y actualiza el cache en memoria.
         """
         if not self._enabled:
-            log.info("Regime analyzer disabled (no ANTHROPIC_API_KEY)")
+            log.info("Regime analyzer disabled (no LLM API key)")
             return RegimeAnalysis.default_unclear("no API key")
 
         try:
@@ -200,25 +244,16 @@ Responde SOLO con JSON válido. NO añadas texto antes o después. NO uses code 
             upcoming_events=self._format_events(upcoming_events),
         )
 
-        client = self._get_client()
-        if client is None:
-            return RegimeAnalysis.default_unclear("no client")
+        # Llamar al LLM provider seleccionado (Gemini o Claude)
+        response_text = await self._call_llm(prompt)
+        if not response_text:
+            return RegimeAnalysis.default_unclear(f"{self._provider} empty response")
 
         try:
-            response = await client.messages.create(
-                model=settings.anthropic_vision_model,
-                max_tokens=600,
-                messages=[{"role": "user", "content": prompt}],
-            )
-        except Exception as e:
-            log.exception("Error calling Claude for regime analysis")
-            return RegimeAnalysis.default_unclear(f"API error: {e}")
-
-        try:
-            text = response.content[0].text if response.content else ""
-            match = re.search(r'\{.*\}', text, re.DOTALL)
+            # Parsear JSON (ambos providers pueden envolver en code fences)
+            match = re.search(r'\{.*\}', response_text, re.DOTALL)
             if not match:
-                log.warning("Regime analyzer: no JSON in response: %s", text[:200])
+                log.warning("Regime analyzer: no JSON in response: %s", response_text[:200])
                 return RegimeAnalysis.default_unclear("no JSON in response")
 
             data = json.loads(match.group(0))
@@ -263,6 +298,62 @@ Responde SOLO con JSON válido. NO añadas texto antes o después. NO uses code 
         except Exception:
             log.exception("Error parsing regime analysis response")
             return RegimeAnalysis.default_unclear("parse error")
+
+    async def _call_llm(self, prompt: str) -> str:
+        """Llama al LLM provider seleccionado y retorna texto de respuesta.
+
+        Gemini: usa generate_text() del GeminiClient existente (response_json=True).
+        Claude: usa messages.create() del Anthropic SDK.
+
+        Retorna string vacío si falla.
+        """
+        if self._provider == "gemini":
+            return await self._call_gemini(prompt)
+        elif self._provider == "anthropic":
+            return await self._call_anthropic(prompt)
+        return ""
+
+    async def _call_gemini(self, prompt: str) -> str:
+        """Llama a Gemini via GeminiClient existente."""
+        client = self._get_gemini()
+        if client is None:
+            log.error("GeminiClient no disponible para regime analysis")
+            return ""
+        try:
+            # system_prompt = instrucciones, user_prompt = datos
+            # Usamos el fallback model (flash) para mantener costo bajo
+            text = await client.generate_text(
+                system_prompt=(
+                    "Eres un analista macro profesional de forex. "
+                    "Responde SIEMPRE con JSON válido y nada más."
+                ),
+                user_prompt=prompt,
+                model_override=settings.gemini_fallback_model,
+                response_json=True,
+            )
+            log.info("Gemini regime response length: %d chars", len(text or ""))
+            return text or ""
+        except Exception:
+            log.exception("Error calling Gemini for regime analysis")
+            return ""
+
+    async def _call_anthropic(self, prompt: str) -> str:
+        """Llama a Claude via Anthropic SDK."""
+        client = self._get_anthropic()
+        if client is None:
+            return ""
+        try:
+            response = await client.messages.create(
+                model=settings.anthropic_vision_model,
+                max_tokens=600,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = response.content[0].text if response.content else ""
+            log.info("Claude regime response length: %d chars", len(text))
+            return text
+        except Exception:
+            log.exception("Error calling Claude for regime analysis")
+            return ""
 
     async def _persist(self, analysis: RegimeAnalysis) -> None:
         """Guarda el análisis en la tabla regime_history para auditoría."""

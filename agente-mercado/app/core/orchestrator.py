@@ -84,9 +84,11 @@ class ForexOrchestrator:
 
         # Analizador de régimen macro (LLM como overlay, NO como decisor)
         # Corre cada 60 min por el scheduler; lee cacheado en cada entry cycle
+        # Provider: Gemini (primario, más barato, ya configurado) > Claude > disabled
         self._regime_analyzer = MacroRegimeAnalyzer(
             broker=self._broker,
             economic_calendar=self._economic_calendar,
+            gemini_client=self._llm,  # reutiliza el GeminiClient del orchestrator
         )
 
     # ── Ciclo legacy (wrapper) ─────────────────────────────────
