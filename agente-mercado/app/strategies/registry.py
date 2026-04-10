@@ -91,55 +91,55 @@ STRATEGIES: dict[str, StrategyConfig] = {
         signal_type="pullback_ema20_short",
         direction="SHORT",
     ),
-    "s3_smc_sensei": StrategyConfig(
-        id="s3_smc_sensei",
-        name="S3 — SMC El Sensei",
+    "s3_ema_crossover": StrategyConfig(
+        id="s3_ema_crossover",
+        name="S3 — Cruce EMA 9/21",
         description=(
-            "Smart Money Concepts: Order Blocks + BOS/ChoCH + Liquidity Sweeps. "
-            "Metodología institucional inspirada en El Sensei. BIAS multi-timeframe "
-            "(D1 > H4 > H1), entradas en M5 con OB + confirmación de estructura. "
-            "Sin límite diario (IA no tiene sesgo psicológico). R:R mínimo 1:2."
+            "Cruce EMA9/EMA21 en M5. Alto volumen (15-25 trades/día). "
+            "Diseñada para aprendizaje rápido del motor de mejora. "
+            "Errores aprendibles: time_filter, candle_quality, sma200_distance."
         ),
-        signal_type="smc_institutional",
+        signal_type="ema_crossover",
         direction="BOTH",
-        instruments=("EUR_USD", "GBP_USD", "USD_JPY"),
+        instruments=("EUR_USD", "GBP_USD", "USD_JPY", "XAU_USD"),
+        primary_timeframe="M5",
         entry_timeframe="M5",
+        min_risk_reward=1.33,  # TP=2.0×ATR / SL=1.5×ATR = 1.33
         max_concurrent_positions=3,
-        max_trades_per_day=0,  # Sin límite — la IA no condiciona un trade por el anterior
+        trades_per_improvement_cycle=20,
     ),
-    "s4_turtle_breakout": StrategyConfig(
-        id="s4_turtle_breakout",
-        name="S4 — Turtle Breakout",
+    "s4_bollinger_reversion": StrategyConfig(
+        id="s4_bollinger_reversion",
+        name="S4 — Bollinger Reversión",
         description=(
-            "Breakout de canal Donchian 20 períodos (Richard Dennis / Curtis Faith). "
-            "Compra al romper máximo de 20 períodos, vende al romper mínimo. "
-            "Filtro: skip si breakout anterior fue ganador. Stop: 2×ATR(20). "
-            "Exit: Donchian(10) inverso."
+            "Reversión a la media con Bandas de Bollinger(20,2) en M5. "
+            "Lógica opuesta a S1/S2: compra en banda inferior, vende en superior. "
+            "10-20 trades/día. TP = banda media (SMA20)."
         ),
-        signal_type="turtle_breakout",
+        signal_type="bollinger_reversion",
+        direction="BOTH",
+        instruments=("EUR_USD", "GBP_USD", "USD_JPY", "XAU_USD"),
+        primary_timeframe="M5",
+        entry_timeframe="M5",
+        min_risk_reward=1.0,
+        max_concurrent_positions=3,
+        trades_per_improvement_cycle=20,
+    ),
+    "s5_session_breakout": StrategyConfig(
+        id="s5_session_breakout",
+        name="S5 — Ruptura Sesión",
+        description=(
+            "Ruptura del rango de apertura de sesión (Londres/NY) en M5. "
+            "Rango = primeros 30 min. Entrada al romper. SL = lado opuesto. "
+            "TP = 1.5× rango. 4-6 trades/día."
+        ),
+        signal_type="session_breakout",
         direction="BOTH",
         instruments=("EUR_USD", "GBP_USD", "USD_JPY"),
-        primary_timeframe="H4",
-        entry_timeframe="H4",
-        risk_per_trade_pct=0.01,
-        min_risk_reward=2.0,
-        max_concurrent_positions=3,
-    ),
-    "s5_connors_rsi2": StrategyConfig(
-        id="s5_connors_rsi2",
-        name="S5 — RSI(2) Connors",
-        description=(
-            "Mean reversion (Larry Connors): compra cuando RSI(2) < 10 en uptrend "
-            "(precio > SMA200), vende cuando RSI(2) > 90 en downtrend. "
-            "Salida: precio cruza SMA(5). Stop: 3×ATR(14). R:R mínimo 1:1.5."
-        ),
-        signal_type="connors_rsi2",
-        direction="BOTH",
-        instruments=("EUR_USD", "GBP_USD", "USD_JPY"),
-        primary_timeframe="H1",
-        entry_timeframe="H1",
-        risk_per_trade_pct=0.01,
+        primary_timeframe="M5",
+        entry_timeframe="M5",
         min_risk_reward=1.5,
-        max_concurrent_positions=3,
+        max_concurrent_positions=2,
+        trades_per_improvement_cycle=20,
     ),
 }

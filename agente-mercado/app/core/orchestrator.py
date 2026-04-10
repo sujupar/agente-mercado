@@ -37,9 +37,9 @@ from app.signals.rule_engine import (
     ForexSignalGenerator,
     ImprovementRuleCheck,
 )
-from app.signals.connors.signal_engine import ConnorsSignalGenerator
-from app.signals.smc.signal_engine import SMCSignalGenerator
-from app.signals.turtle.signal_engine import TurtleSignalGenerator
+from app.signals.bollinger.signal_engine import BollingerMeanReversionGenerator
+from app.signals.ema_crossover.signal_engine import EMACrossoverGenerator
+from app.signals.session_breakout.signal_engine import SessionBreakoutGenerator
 from app.strategies.registry import STRATEGIES
 
 log = logging.getLogger(__name__)
@@ -62,11 +62,6 @@ class ForexOrchestrator:
         # {strategy_id: {instrument: ContextResult}}
         self._context_cache: dict[str, dict[str, ContextResult]] = {}
         self._context_updated_at: datetime | None = None
-
-        # Cache de BIAS SMC por instrumento (S3)
-        # {instrument: "BULLISH"|"BEARISH"|"NEUTRAL"}
-        self._smc_bias_cache: dict[str, str] = {}
-        self._smc_bias_updated_at: datetime | None = None
 
         # Trades hoy por estrategia (para max_trades_per_day)
         self._trades_today: dict[str, int] = {}
@@ -168,13 +163,8 @@ class ForexOrchestrator:
                     if not config.enabled:
                         continue
 
-                    if config.signal_type == "smc_institutional":
-                        # S3 SMC: calcular BIAS multi-timeframe
-                        await self._run_smc_context(config, instruments_data)
-                        continue
-
-                    if config.signal_type in ("turtle_breakout", "connors_rsi2"):
-                        # S4/S5: no usan contexto H1/H4 — análisis directo en entry cycle
+                    if config.signal_type in ("ema_crossover", "bollinger_reversion", "session_breakout"):
+                        # S3/S4/S5 nuevas: análisis directo en M5 entry cycle, no usan contexto H1/H4
                         continue
 
                     # S1/S2: 8 filtros de contexto Oliver Vélez
@@ -214,12 +204,11 @@ class ForexOrchestrator:
         # Generar señales en cualquier sesión (Tokyo, London, NY)
         # La IA no tiene sesgo psicológico — opera todas las sesiones
 
-        # Si cache contexto O cache SMC BIAS están vacíos/expirados, refrescar
-        if self._context_needs_refresh() or self._smc_bias_needs_refresh():
+        # Si cache de contexto está vacío/expirado, refrescar
+        if self._context_needs_refresh():
             log.info(
-                "Cache contexto/BIAS expirado — refrescando "
-                "(ctx_age=%s, bias_age=%s)",
-                self._context_updated_at, self._smc_bias_updated_at,
+                "Cache contexto expirado — refrescando (ctx_age=%s)",
+                self._context_updated_at,
             )
             await self.run_context_cycle()
 
@@ -289,51 +278,37 @@ class ForexOrchestrator:
                         continue
 
                     try:
-                        if config.signal_type == "smc_institutional":
-                            entry_data = candle_cache.get(config.entry_timeframe, {})
-                            h1_data = candle_cache.get("H1", {})
-                            if not self._smc_bias_cache:
-                                log.warning(
-                                    "[%s] BIAS cache vacío — esperando próximo ciclo de contexto",
-                                    config.id,
-                                )
-                                signals = []
-                            elif not entry_data:
-                                log.warning(
-                                    "[%s] Sin candles %s en cache — skip",
-                                    config.id, config.entry_timeframe,
-                                )
-                                signals = []
-                            else:
-                                improvement_rules = await self._load_improvement_rules(session, config.id)
-                                generator = SMCSignalGenerator(config, improvement_rules)
-                                signals = generator.scan_entries(self._smc_bias_cache, entry_data, h1_data)
-
-                        elif config.signal_type == "turtle_breakout":
-                            entry_data = candle_cache.get(config.entry_timeframe, {})
+                        if config.signal_type == "ema_crossover":
+                            # S3: Cruce EMA9/EMA21 — alto volumen en M5
+                            entry_data = candle_cache.get("M5", {})
                             if not entry_data:
-                                log.warning(
-                                    "[%s] Sin candles %s en cache — skip",
-                                    config.id, config.entry_timeframe,
-                                )
+                                log.warning("[%s] Sin candles M5 — skip", config.id)
                                 signals = []
                             else:
-                                last_results = getattr(self, "_turtle_last_breakout", {})
                                 improvement_rules = await self._load_improvement_rules(session, config.id)
-                                gen = TurtleSignalGenerator(config, improvement_rules, last_results)
+                                gen = EMACrossoverGenerator(config, improvement_rules)
                                 signals = gen.scan_entries(entry_data)
 
-                        elif config.signal_type == "connors_rsi2":
-                            entry_data = candle_cache.get(config.entry_timeframe, {})
+                        elif config.signal_type == "bollinger_reversion":
+                            # S4: Reversión Bollinger — lógica opuesta a S1/S2
+                            entry_data = candle_cache.get("M5", {})
                             if not entry_data:
-                                log.warning(
-                                    "[%s] Sin candles %s en cache — skip",
-                                    config.id, config.entry_timeframe,
-                                )
+                                log.warning("[%s] Sin candles M5 — skip", config.id)
                                 signals = []
                             else:
                                 improvement_rules = await self._load_improvement_rules(session, config.id)
-                                gen = ConnorsSignalGenerator(config, improvement_rules)
+                                gen = BollingerMeanReversionGenerator(config, improvement_rules)
+                                signals = gen.scan_entries(entry_data)
+
+                        elif config.signal_type == "session_breakout":
+                            # S5: Ruptura rango de sesión Londres/NY
+                            entry_data = candle_cache.get("M5", {})
+                            if not entry_data:
+                                log.warning("[%s] Sin candles M5 — skip", config.id)
+                                signals = []
+                            else:
+                                improvement_rules = await self._load_improvement_rules(session, config.id)
+                                gen = SessionBreakoutGenerator(config, improvement_rules)
                                 signals = gen.scan_entries(entry_data)
 
                         else:
@@ -430,26 +405,9 @@ class ForexOrchestrator:
         age = (datetime.now(timezone.utc) - self._context_updated_at).total_seconds()
         return age > self._CONTEXT_MAX_AGE_SEC
 
-    def _smc_bias_needs_refresh(self) -> bool:
-        """True si el cache BIAS de S3 está vacío o expirado.
-
-        Verifica independientemente del context cache de S1/S2 — si S3 tiene
-        BIAS vacío, debemos refrescar aunque S1/S2 estén OK.
-        """
-        if not self._smc_bias_cache or self._smc_bias_updated_at is None:
-            return True
-        age = (datetime.now(timezone.utc) - self._smc_bias_updated_at).total_seconds()
-        return age > self._CONTEXT_MAX_AGE_SEC
-
     async def _fetch_all_candles(self) -> dict[str, dict[str, list[Candle]]]:
-        """Fetch candles H1, H4 y D1 para todos los instrumentos (contexto)."""
+        """Fetch candles H1 y H4 para todos los instrumentos (contexto S1/S2)."""
         result: dict[str, dict[str, list[Candle]]] = {}
-
-        # Check if any strategy needs D1 candles
-        needs_d1 = any(
-            c.signal_type == "smc_institutional" and c.enabled
-            for c in STRATEGIES.values()
-        )
 
         for instrument in self._instruments:
             try:
@@ -463,47 +421,10 @@ class ForexOrchestrator:
                         "H1": candles_h1,
                         "H4": candles_h4,
                     }
-
-                    # Fetch D1 for SMC strategies
-                    if needs_d1:
-                        try:
-                            candles_d1 = await self._broker.get_candles(instrument, "D1", 100)
-                            result[instrument]["D1"] = candles_d1
-                            await asyncio.sleep(0.3)
-                        except Exception:
-                            log.debug("D1 candles no disponibles para %s", instrument)
             except Exception:
                 log.exception("Error fetching candles para %s", instrument)
 
         return result
-
-    async def _run_smc_context(
-        self,
-        config: "StrategyConfig",
-        instruments_data: dict[str, dict[str, list[Candle]]],
-    ) -> None:
-        """Fase 1 SMC: calcular BIAS multi-timeframe para S3."""
-        # Filter to only this strategy's instruments
-        smc_data = {
-            inst: tf_data for inst, tf_data in instruments_data.items()
-            if inst in config.instruments
-        }
-        if not smc_data:
-            return
-
-        improvement_rules = []  # SMC doesn't use improvement rules yet in context
-        generator = SMCSignalGenerator(config, improvement_rules)
-        bias_results = generator.check_bias(smc_data)
-
-        self._smc_bias_cache = bias_results
-        self._smc_bias_updated_at = datetime.now(timezone.utc)
-
-        ready = [inst for inst, bias in bias_results.items() if bias != "NEUTRAL"]
-        log.info(
-            "[%s] BIAS: %d/%d instrumentos con dirección%s",
-            config.id, len(ready), len(smc_data),
-            f" ({', '.join(f'{i}={bias_results[i]}' for i in ready)})" if ready else "",
-        )
 
     def _check_daily_trade_limit(self, strategy_id: str, config) -> bool:
         """Verifica si la estrategia ya alcanzó su límite diario de trades."""
