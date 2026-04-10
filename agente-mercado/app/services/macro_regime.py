@@ -41,9 +41,9 @@ Regime = Literal["RISK_ON", "RISK_OFF", "TRANSITION", "UNCLEAR"]
 ALL_STRATEGIES = [
     "s1_pullback_20_up",
     "s2_pullback_20_down",
-    "s3_smc_sensei",
-    "s4_turtle_breakout",
-    "s5_connors_rsi2",
+    "s3_ema_crossover",
+    "s4_bollinger_reversion",
+    "s5_session_breakout",
 ]
 
 
@@ -66,7 +66,7 @@ class RegimeAnalysis:
             regime="UNCLEAR",
             confidence=0.0,
             reasoning=f"Default: {reason}",
-            active_strategies=["s1_pullback_20_up", "s2_pullback_20_down"],
+            active_strategies=ALL_STRATEGIES,  # En modo default, todas activas
             risk_multiplier=0.5,
         )
 
@@ -119,12 +119,12 @@ INSTRUCCIONES CRÍTICAS:
 
 | Régimen | Confidence | active_strategies | risk_multiplier |
 |---------|-----------|-------------------|-----------------|
-| RISK_ON | >0.7 | s1_pullback_20_up, s4_turtle_breakout | 1.0-1.2 |
-| RISK_ON | 0.5-0.7 | s1_pullback_20_up | 0.7-1.0 |
-| RISK_OFF | >0.7 | s2_pullback_20_down, s4_turtle_breakout, s3_smc_sensei | 0.8-1.0 |
-| RISK_OFF | 0.5-0.7 | s2_pullback_20_down | 0.6-0.8 |
-| TRANSITION | any | s5_connors_rsi2 (solo mean reversion) | 0.5 |
-| UNCLEAR | any | s1_pullback_20_up, s2_pullback_20_down (ambos con risk bajo) | 0.3 |
+| RISK_ON | >0.7 | s1_pullback_20_up, s3_ema_crossover, s5_session_breakout | 1.0-1.2 |
+| RISK_ON | 0.5-0.7 | s1_pullback_20_up, s3_ema_crossover | 0.7-1.0 |
+| RISK_OFF | >0.7 | s2_pullback_20_down, s3_ema_crossover, s4_bollinger_reversion | 0.8-1.0 |
+| RISK_OFF | 0.5-0.7 | s2_pullback_20_down, s4_bollinger_reversion | 0.6-0.8 |
+| TRANSITION | any | s4_bollinger_reversion (mean reversion funciona en transición) | 0.5 |
+| UNCLEAR | any | s3_ema_crossover, s4_bollinger_reversion (ambas con risk bajo) | 0.3 |
 
 6. Si confidence < 0.5, SIEMPRE usa risk_multiplier <= 0.5.
 
