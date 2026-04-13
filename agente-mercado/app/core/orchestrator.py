@@ -38,7 +38,11 @@ from app.signals.rule_engine import (
     ImprovementRuleCheck,
 )
 from app.signals.bollinger.signal_engine import BollingerMeanReversionGenerator
+from app.signals.double_ema.signal_engine import DoubleEMAPullbackGenerator
 from app.signals.ema_crossover.signal_engine import EMACrossoverGenerator
+from app.signals.momentum_breakout.signal_engine import MomentumBreakoutGenerator
+from app.signals.pullback_m5.signal_engine import PullbackEMA20M5Generator
+from app.signals.rsi_ema.signal_engine import RSIEma20Generator
 from app.signals.session_breakout.signal_engine import SessionBreakoutGenerator
 from app.strategies.registry import STRATEGIES
 
@@ -163,8 +167,11 @@ class ForexOrchestrator:
                     if not config.enabled:
                         continue
 
-                    if config.signal_type in ("ema_crossover", "bollinger_reversion", "session_breakout"):
-                        # S3/S4/S5 nuevas: análisis directo en M5 entry cycle, no usan contexto H1/H4
+                    if config.signal_type in (
+                        "ema_crossover", "bollinger_reversion", "session_breakout",
+                        "pullback_ema20_m5", "double_ema_pullback", "rsi_ema20", "momentum_breakout",
+                    ):
+                        # S3-S10: análisis directo en M5 entry cycle, no usan contexto H1/H4
                         continue
 
                     # S1/S2: 8 filtros de contexto Oliver Vélez
@@ -260,22 +267,15 @@ class ForexOrchestrator:
                     if self._check_daily_trade_limit(strategy_id, config):
                         continue
 
-                    # Regime overlay: skip si la estrategia no está activa en este régimen
-                    # Si active_strategies está vacío, el LLM considera que nada debe operar
-                    # (ej: UNCLEAR con baja confidence)
-                    if self._regime_analyzer.enabled and regime.active_strategies:
-                        if strategy_id not in regime.active_strategies:
-                            log.debug(
-                                "[%s] Skip: no activa en régimen %s",
-                                strategy_id, regime.regime,
-                            )
-                            continue
-                    elif self._regime_analyzer.enabled and not regime.active_strategies:
-                        log.debug(
-                            "[%s] Skip: régimen %s sin estrategias activas",
-                            strategy_id, regime.regime,
-                        )
-                        continue
+                    # Regime overlay: MODULA riesgo pero NO bloquea estrategias.
+                    # Todas operan siempre para que el motor de mejora aprenda.
+                    # Las "no preferidas" operan con 50% de riesgo.
+                    self._current_regime_penalty = 1.0
+                    if self._regime_analyzer.enabled:
+                        if regime.active_strategies and strategy_id not in regime.active_strategies:
+                            self._current_regime_penalty = 0.5
+                        elif not regime.active_strategies:
+                            self._current_regime_penalty = 0.3
 
                     try:
                         if config.signal_type == "ema_crossover":
@@ -309,6 +309,46 @@ class ForexOrchestrator:
                             else:
                                 improvement_rules = await self._load_improvement_rules(session, config.id)
                                 gen = SessionBreakoutGenerator(config, improvement_rules)
+                                signals = gen.scan_entries(entry_data)
+
+                        elif config.signal_type == "pullback_ema20_m5":
+                            # S6/S7: Pullback EMA20 en M5
+                            entry_data = candle_cache.get("M5", {})
+                            if not entry_data:
+                                signals = []
+                            else:
+                                improvement_rules = await self._load_improvement_rules(session, config.id)
+                                gen = PullbackEMA20M5Generator(config, improvement_rules)
+                                signals = gen.scan_entries(entry_data)
+
+                        elif config.signal_type == "double_ema_pullback":
+                            # S8: Double EMA Pullback
+                            entry_data = candle_cache.get("M5", {})
+                            if not entry_data:
+                                signals = []
+                            else:
+                                improvement_rules = await self._load_improvement_rules(session, config.id)
+                                gen = DoubleEMAPullbackGenerator(config, improvement_rules)
+                                signals = gen.scan_entries(entry_data)
+
+                        elif config.signal_type == "rsi_ema20":
+                            # S9: RSI + EMA20
+                            entry_data = candle_cache.get("M5", {})
+                            if not entry_data:
+                                signals = []
+                            else:
+                                improvement_rules = await self._load_improvement_rules(session, config.id)
+                                gen = RSIEma20Generator(config, improvement_rules)
+                                signals = gen.scan_entries(entry_data)
+
+                        elif config.signal_type == "momentum_breakout":
+                            # S10: Momentum Breakout
+                            entry_data = candle_cache.get("M5", {})
+                            if not entry_data:
+                                signals = []
+                            else:
+                                improvement_rules = await self._load_improvement_rules(session, config.id)
+                                gen = MomentumBreakoutGenerator(config, improvement_rules)
                                 signals = gen.scan_entries(entry_data)
 
                         else:
@@ -577,30 +617,32 @@ class ForexOrchestrator:
         # 4. Obtener AgentState para tracking + stepped compound
         state = await self._ensure_state(session, strategy_id)
 
-        # 5. Calcular position size con riesgo escalonado (stepped compound)
-        # Base capital = monto sobre el cual se calcula el 1% de riesgo.
-        # Solo sube cuando el balance alcanza +50% sobre la base.
-        base_capital = state.base_capital_usd or account.balance
-        risk_base, next_threshold = get_stepped_risk_base(
-            account.balance, base_capital,
-        )
-
-        # Actualizar si subió de nivel
-        if risk_base != base_capital:
-            state.base_capital_usd = risk_base
-            state.next_threshold_usd = next_threshold
-            log.info(
-                "[%s] Base capital actualizado: $%.2f → $%.2f (next: $%.2f)",
-                strategy_id, base_capital, risk_base, next_threshold,
+        # 5. Calcular position size
+        # Estrategias con capital propio (≤$100): usan su capital, sin stepped compound
+        # S1/S2 con capital del broker: usan stepped compound
+        if strategy_config.initial_capital_usd <= 100.0:
+            # S3-S10: capital propio ($100), riesgo calculado sobre ese monto
+            risk_base = state.base_capital_usd or strategy_config.initial_capital_usd
+            next_threshold = risk_base * 1.5
+            if state.base_capital_usd is None:
+                state.base_capital_usd = strategy_config.initial_capital_usd
+                state.next_threshold_usd = next_threshold
+        else:
+            # S1/S2: stepped compound sobre balance del broker
+            base_capital = state.base_capital_usd or account.balance
+            risk_base, next_threshold = get_stepped_risk_base(
+                account.balance, base_capital,
             )
-        elif state.base_capital_usd is None:
-            # Inicializar base capital con balance actual del broker
-            state.base_capital_usd = account.balance
-            state.next_threshold_usd = next_threshold
-            log.info(
-                "[%s] Base capital inicializado: $%.2f (next: $%.2f)",
-                strategy_id, account.balance, next_threshold,
-            )
+            if risk_base != base_capital:
+                state.base_capital_usd = risk_base
+                state.next_threshold_usd = next_threshold
+                log.info(
+                    "[%s] Base capital actualizado: $%.2f → $%.2f (next: $%.2f)",
+                    strategy_id, base_capital, risk_base, next_threshold,
+                )
+            elif state.base_capital_usd is None:
+                state.base_capital_usd = account.balance
+                state.next_threshold_usd = next_threshold
 
         stop_distance = abs(signal.entry_price - signal.stop_price)
 
@@ -609,7 +651,8 @@ class ForexOrchestrator:
         # < 1.0 reduce exposure (ej. UNCLEAR, TRANSITION, baja confidence)
         # > 1.0 aumenta exposure (ej. RISK_ON o RISK_OFF con alta confidence)
         regime = self._regime_analyzer.get_current_regime()
-        effective_risk_pct = strategy_config.risk_per_trade_pct * regime.risk_multiplier
+        regime_penalty = getattr(self, '_current_regime_penalty', 1.0)
+        effective_risk_pct = strategy_config.risk_per_trade_pct * regime.risk_multiplier * regime_penalty
 
         units = calculate_position_size(
             instrument=signal.instrument,
@@ -929,7 +972,7 @@ class ForexOrchestrator:
         current_sl = position.stop_loss or trade.stop_loss_price
 
         # Fase 1: Break-even at 1R
-        if profit_per_unit >= stop_distance and current_sl < entry if is_long else current_sl > entry:
+        if profit_per_unit >= stop_distance and (current_sl < entry if is_long else current_sl > entry):
             result = await self._broker.modify_trade(
                 trade_id=position.trade_id,
                 stop_loss=entry,

@@ -44,6 +44,11 @@ ALL_STRATEGIES = [
     "s3_ema_crossover",
     "s4_bollinger_reversion",
     "s5_session_breakout",
+    "s6_pullback_20_up_m5",
+    "s7_pullback_20_down_m5",
+    "s8_double_ema_pullback",
+    "s9_rsi_ema20",
+    "s10_momentum_breakout",
 ]
 
 
