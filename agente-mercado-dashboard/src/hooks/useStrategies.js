@@ -1,11 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/endpoints';
 
-export function useStrategies() {
+export function useStrategies({ fromDate, toDate } = {}) {
   return useQuery({
-    queryKey: ['strategies'],
+    queryKey: ['strategies', fromDate, toDate],
     queryFn: async () => {
-      const response = await api.getStrategies();
+      const params = {};
+      if (fromDate) params.from_date = fromDate;
+      if (toDate) params.to_date = toDate;
+      const response = await api.getStrategies(params);
       return response.data;
     },
     refetchInterval: 15000,
@@ -14,11 +17,14 @@ export function useStrategies() {
   });
 }
 
-export function useStrategyTrades(strategyId) {
+export function useStrategyTrades(strategyId, { fromDate, toDate } = {}) {
   return useQuery({
-    queryKey: ['strategyTrades', strategyId],
+    queryKey: ['strategyTrades', strategyId, fromDate, toDate],
     queryFn: async () => {
-      const response = await api.getStrategyTrades(strategyId, { limit: 30 });
+      const params = { limit: 50 };
+      if (fromDate) params.from_date = fromDate;
+      if (toDate) params.to_date = toDate;
+      const response = await api.getStrategyTrades(strategyId, params);
       return response.data;
     },
     enabled: !!strategyId,

@@ -161,7 +161,7 @@ export const api = {
   // ESTRATEGIAS
   // ==========================================
 
-  getStrategies: () => apiClient.get('/strategies'),
+  getStrategies: (params = {}) => apiClient.get('/strategies', { params }),
   getStrategyTrades: (strategyId, params = {}) =>
     apiClient.get(`/strategies/${strategyId}/trades`, { params }),
   getStrategyBitacora: (strategyId, limit = 50) =>

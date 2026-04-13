@@ -698,14 +698,19 @@ async def get_learning_log(
 @router.get("/strategies", response_model=list[StrategyOut])
 async def get_strategies(
     session: AsyncSession = Depends(get_session),
+    from_date: str | None = None,
+    to_date: str | None = None,
     _user: str = Depends(verify_token),
 ):
-    """Lista todas las estrategias con su estado actual."""
+    """Lista todas las estrategias con su estado actual. Filtro opcional por fecha."""
     result = await session.execute(select(Strategy).order_by(Strategy.id))
     strategies = result.scalars().all()
 
     out = []
     improvement_engine = ImprovementEngine(session)
+
+    # Si hay filtro de fecha, calcular stats desde trades directamente
+    use_date_filter = from_date or to_date
 
     for s in strategies:
         # Obtener AgentState de esta estrategia
@@ -714,8 +719,28 @@ async def get_strategies(
         )
         state = state_result.scalar_one_or_none()
 
-        total = (state.trades_won + state.trades_lost) if state else 0
-        wr = state.trades_won / total if total > 0 else 0.0
+        if use_date_filter:
+            # Calcular stats filtrados por fecha
+            trade_query = select(Trade).where(
+                Trade.strategy_id == s.id, Trade.status == "CLOSED",
+            )
+            if from_date:
+                trade_query = trade_query.where(Trade.created_at >= datetime.fromisoformat(from_date))
+            if to_date:
+                trade_query = trade_query.where(Trade.created_at <= datetime.fromisoformat(to_date + "T23:59:59+00:00"))
+            trades_result = await session.execute(trade_query)
+            filtered_trades = trades_result.scalars().all()
+            trades_won = sum(1 for t in filtered_trades if (t.pnl or 0) > 0)
+            trades_lost = sum(1 for t in filtered_trades if (t.pnl or 0) <= 0)
+            total_pnl = sum(t.pnl or 0 for t in filtered_trades)
+            total = trades_won + trades_lost
+            wr = trades_won / total if total > 0 else 0.0
+        else:
+            trades_won = state.trades_won if state else 0
+            trades_lost = state.trades_lost if state else 0
+            total_pnl = state.total_pnl if state else 0
+            total = trades_won + trades_lost
+            wr = trades_won / total if total > 0 else 0.0
 
         # Cross-check: positions_open desde Trade table (fuente de verdad)
         actual_open_result = await session.execute(
@@ -748,10 +773,10 @@ async def get_strategies(
             llm_budget_fraction=s.llm_budget_fraction,
             capital_usd=state.capital_usd if state else 0,
             peak_capital_usd=state.peak_capital_usd if state else 0,
-            total_pnl=state.total_pnl if state else 0,
+            total_pnl=total_pnl,
             positions_open=actual_open,
-            trades_won=state.trades_won if state else 0,
-            trades_lost=state.trades_lost if state else 0,
+            trades_won=trades_won,
+            trades_lost=trades_lost,
             win_rate=round(wr, 4),
             mode=state.mode if state else "UNKNOWN",
             last_trade_at=state.last_trade_at if state else None,
@@ -771,13 +796,19 @@ async def get_strategy_trades(
     limit: int = 50,
     offset: int = 0,
     status: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
     session: AsyncSession = Depends(get_session),
     _user: str = Depends(verify_token),
 ):
-    """Trades de una estrategia."""
+    """Trades de una estrategia, con filtro opcional por fecha (ISO: 2026-04-01)."""
     query = select(Trade).where(Trade.strategy_id == strategy_id)
     if status:
         query = query.where(Trade.status == status.upper())
+    if from_date:
+        query = query.where(Trade.created_at >= datetime.fromisoformat(from_date))
+    if to_date:
+        query = query.where(Trade.created_at <= datetime.fromisoformat(to_date + "T23:59:59+00:00"))
     query = query.order_by(Trade.created_at.desc()).offset(offset).limit(limit)
 
     result = await session.execute(query)
