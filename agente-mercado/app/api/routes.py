@@ -1094,6 +1094,12 @@ async def admin_toggle_rule(
     if rule is None:
         raise HTTPException(status_code=404, detail=f"Regla {rule_id} no encontrada")
 
+    # Snapshot del estado antes del update (el ORM puede refrescar después)
+    previous = rule.is_active
+    strategy_id = rule.strategy_id
+    pattern_name = rule.pattern_name
+    cycle_number = rule.cycle_number
+
     await session.execute(
         sql_update(ImprovementRule)
         .where(ImprovementRule.id == rule_id)
@@ -1103,12 +1109,12 @@ async def admin_toggle_rule(
 
     return {
         "rule_id": rule_id,
-        "strategy_id": rule.strategy_id,
-        "pattern_name": rule.pattern_name,
-        "cycle_number": rule.cycle_number,
-        "previous_is_active": rule.is_active,
+        "strategy_id": strategy_id,
+        "pattern_name": pattern_name,
+        "cycle_number": cycle_number,
+        "previous_is_active": previous,
         "new_is_active": is_active,
-        "message": f"Regla {rule_id} ({rule.pattern_name}) ahora is_active={is_active}",
+        "message": f"Regla {rule_id} ({pattern_name}) ahora is_active={is_active}",
     }
 
 
@@ -1942,7 +1948,8 @@ async def get_current_regime():
     NO dispara análisis nuevo — solo lee el cache.
     """
     from app.core.scheduler import _ensure_orchestrator
-    orch = _ensure_orchestrator()
+    # Regime analyzer es compartido entre envs — usamos DEMO como canonical
+    orch = _ensure_orchestrator("DEMO")
     if orch is None:
         return {
             "regime": "UNCLEAR",

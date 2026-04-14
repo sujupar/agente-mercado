@@ -788,7 +788,7 @@ class ForexOrchestrator:
             stop_distance_pips=stop_distance,
             timeframe_entry=signal.entry_timeframe,
             context_timeframe="H4",
-            market_state_json=signal.market_state_h1.to_dict(),
+            market_state_json=signal.market_state_h1.to_dict() if signal.market_state_h1 else None,
             status="OPEN",
             is_simulation=settings.oanda_environment == "practice",
             entry_ema20_distance_atr=ema20_dist_atr,
@@ -815,7 +815,7 @@ class ForexOrchestrator:
                 f"Tendencia H1: {signal.market_state_h1.trend_state}. "
                 f"8/8 filtros de contexto pasados."
             ),
-            market_context=signal.market_state_h1.to_dict(),
+            market_context=signal.market_state_h1.to_dict() if signal.market_state_h1 else None,
             entry_price=trade.entry_price,
             entry_time=datetime.now(timezone.utc),
         )
