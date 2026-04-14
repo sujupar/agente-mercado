@@ -4,10 +4,10 @@ import { useStrategies } from '../../hooks/useStrategies';
 import { StrategyCard } from './StrategyCard';
 import { StrategyDetail } from './StrategyDetail';
 import { DateFilter } from '../DateFilter';
+import { PageHeader } from '../Layout/PageHeader';
 import { useDashboardContext } from '../../context/DashboardContext';
 
 export function StrategiesPage() {
-  // Usa el DateFilter GLOBAL del context (default HOY)
   const { globalFromDate, globalToDate, setGlobalDate } = useDashboardContext();
   const fromDate = globalFromDate;
   const toDate = globalToDate;
@@ -19,8 +19,8 @@ export function StrategiesPage() {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="text-center">
-          <div className="w-8 h-8 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-sm text-gray-400">Cargando estrategias...</p>
+          <div className="w-8 h-8 border-2 border-fm-border border-t-fm-primary rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-sm text-fm-text-2">Cargando estrategias...</p>
         </div>
       </div>
     );
@@ -28,12 +28,15 @@ export function StrategiesPage() {
 
   if (!strategies?.length) {
     return (
-      <div className="text-center py-20">
-        <p className="text-gray-400">No hay estrategias configuradas</p>
-        <p className="text-xs text-gray-600 mt-1">
-          Las estrategias se crean automaticamente al iniciar el agente
-        </p>
-      </div>
+      <>
+        <PageHeader title="Estrategias" description="Estrategias activas del agente" />
+        <div className="text-center py-20 bg-fm-surface border border-fm-border rounded-xl">
+          <p className="text-fm-text-2">No hay estrategias configuradas</p>
+          <p className="text-xs text-fm-text-dim mt-1">
+            Las estrategias se crean automáticamente al iniciar el agente
+          </p>
+        </div>
+      </>
     );
   }
 
@@ -41,18 +44,15 @@ export function StrategiesPage() {
   if (selectedStrategy) {
     const current = strategies.find((s) => s.id === selectedStrategy);
     if (current) {
-      return (
-        <StrategyDetail
-          strategy={current}
-          onBack={() => setSelectedStrategy(null)}
-        />
-      );
+      return <StrategyDetail strategy={current} onBack={() => setSelectedStrategy(null)} />;
     }
   }
 
-  // Summary stats — usar SIEMPRE broker_balance (compartido entre estrategias)
-  // Sin fallback a sum(capital_usd): si está en 0, indica problema de sync con Capital.com
-  const brokerBalance = strategies.reduce((max, s) => Math.max(max, s.broker_balance || 0), 0);
+  // Summary stats
+  const brokerBalance = strategies.reduce(
+    (max, s) => Math.max(max, s.broker_balance || 0),
+    0,
+  );
   const totalCapital = brokerBalance;
   const totalPnl = strategies.reduce((sum, s) => sum + (s.total_pnl || 0), 0);
   const totalTrades = strategies.reduce(
@@ -61,47 +61,48 @@ export function StrategiesPage() {
   );
   const totalOpen = strategies.reduce((sum, s) => sum + (s.positions_open || 0), 0);
 
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="space-y-6"
-    >
-      {/* Date filter local (sincronizado con el global del topbar) */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-xs text-tv-text-dim uppercase tracking-wider">Periodo:</span>
-        <DateFilter
-          fromDate={fromDate}
-          toDate={toDate}
-          onChange={setGlobalDate}
-        />
-      </div>
+  const metrics = [
+    { label: 'Capital total', value: `$${totalCapital.toFixed(2)}`, color: 'text-fm-text' },
+    {
+      label: 'P&L total',
+      value: `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`,
+      color: totalPnl > 0 ? 'text-fm-success' : totalPnl < 0 ? 'text-fm-danger' : 'text-fm-text',
+    },
+    { label: 'Trades totales', value: totalTrades, color: 'text-fm-text' },
+    { label: 'Posiciones abiertas', value: totalOpen, color: 'text-fm-accent' },
+  ];
 
-      {/* Global summary */}
-      <div className="grid grid-cols-4 gap-3">
-        {[
-          { label: 'Capital Total', value: `$${totalCapital.toFixed(2)}` },
-          {
-            label: 'P&L Total',
-            value: `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`,
-            color: totalPnl > 0 ? 'text-emerald-400' : totalPnl < 0 ? 'text-red-400' : 'text-white',
-          },
-          { label: 'Trades Totales', value: totalTrades },
-          { label: 'Posiciones Abiertas', value: totalOpen },
-        ].map((m) => (
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-5">
+      <PageHeader
+        title="Estrategias"
+        description={`${strategies.length} estrategias configuradas · aprendizaje automático activo`}
+        actions={
+          <DateFilter
+            fromDate={fromDate}
+            toDate={toDate}
+            onChange={setGlobalDate}
+            size="sm"
+          />
+        }
+      />
+
+      {/* Summary */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {metrics.map((m) => (
           <div
             key={m.label}
-            className="bg-gray-900/50 rounded-xl border border-gray-700/30 p-4 text-center"
+            className="bg-fm-surface border border-fm-border rounded-xl p-4 shadow-fm-sm"
           >
-            <p className="text-xs text-gray-500">{m.label}</p>
-            <p className={`text-lg font-bold mt-1 ${m.color || 'text-white'}`}>
+            <p className="text-xs text-fm-text-2">{m.label}</p>
+            <p className={`text-xl font-semibold font-mono tabular-nums mt-1 ${m.color}`}>
               {m.value}
             </p>
           </div>
         ))}
       </div>
 
-      {/* Strategy cards grid */}
+      {/* Strategy grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {strategies.map((strategy, i) => (
           <StrategyCard

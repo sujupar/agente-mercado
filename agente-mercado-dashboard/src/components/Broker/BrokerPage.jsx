@@ -7,21 +7,29 @@ import {
   ArrowTrendingUpIcon,
   ArrowTrendingDownIcon,
 } from '@heroicons/react/24/outline';
-import { useBrokerAccount, useBrokerPositions, useBrokerSync, useForceBrokerSync } from '../../hooks/useBroker';
+import {
+  useBrokerAccount,
+  useBrokerPositions,
+  useBrokerSync,
+  useForceBrokerSync,
+} from '../../hooks/useBroker';
 import { useAllMarketStates } from '../../hooks/useMarketState';
 import { useBrokerEnvironment } from '../../hooks/useBrokerEnvironment';
 import { AccountSelector } from '../Layout/AccountSelector';
+import { PageHeader } from '../Layout/PageHeader';
 
 function ConnectionBadge({ connected }) {
   return (
-    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${
-      connected
-        ? 'bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30'
-        : 'bg-red-500/15 text-red-400 ring-1 ring-red-500/30'
-    }`}>
-      <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
-        connected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'
-      }`} />
+    <span
+      className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+        connected ? 'bg-fm-success-soft text-fm-success' : 'bg-fm-danger-soft text-fm-danger'
+      }`}
+    >
+      <span
+        className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
+          connected ? 'bg-fm-success animate-pulse' : 'bg-fm-danger'
+        }`}
+      />
       {connected ? 'Conectado' : 'Desconectado'}
     </span>
   );
@@ -30,11 +38,11 @@ function ConnectionBadge({ connected }) {
 function AccountCard({ account, isLoading }) {
   if (isLoading) {
     return (
-      <div className="bg-gray-900/60 backdrop-blur-xl border border-gray-800/50 rounded-2xl p-5 animate-pulse">
-        <div className="h-4 bg-gray-800 rounded w-32 mb-4" />
-        <div className="grid grid-cols-2 gap-4">
+      <div className="bg-fm-surface border border-fm-border shadow-fm-sm rounded-xl p-6 animate-pulse">
+        <div className="h-4 bg-fm-surface-2 rounded w-32 mb-4" />
+        <div className="grid grid-cols-2 gap-3">
           {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-12 bg-gray-800 rounded-xl" />
+            <div key={i} className="h-16 bg-fm-surface-2 rounded-lg" />
           ))}
         </div>
       </div>
@@ -44,29 +52,37 @@ function AccountCard({ account, isLoading }) {
   if (!account) return null;
 
   const stats = [
-    { label: 'Balance', value: `$${account.balance?.toFixed(2)}`, color: 'text-white' },
-    { label: 'Equity', value: `$${account.equity?.toFixed(2)}`, color: 'text-white' },
-    { label: 'P&L No Realizado', value: `$${account.unrealized_pnl?.toFixed(2)}`, color: account.unrealized_pnl >= 0 ? 'text-emerald-400' : 'text-red-400' },
-    { label: 'Margen Usado', value: `$${account.margin_used?.toFixed(2)}`, color: 'text-amber-400' },
-    { label: 'Margen Disponible', value: `$${account.margin_available?.toFixed(2)}`, color: 'text-blue-400' },
-    { label: 'Trades Abiertos', value: account.open_trades, color: 'text-white' },
+    { label: 'Balance', value: `$${account.balance?.toFixed(2)}`, color: 'text-fm-text' },
+    { label: 'Equity', value: `$${account.equity?.toFixed(2)}`, color: 'text-fm-text' },
+    {
+      label: 'P&L no realizado',
+      value: `$${account.unrealized_pnl?.toFixed(2)}`,
+      color: account.unrealized_pnl >= 0 ? 'text-fm-success' : 'text-fm-danger',
+    },
+    { label: 'Margen usado', value: `$${account.margin_used?.toFixed(2)}`, color: 'text-fm-warning' },
+    {
+      label: 'Margen disponible',
+      value: `$${account.margin_available?.toFixed(2)}`,
+      color: 'text-fm-primary',
+    },
+    { label: 'Trades abiertos', value: account.open_trades, color: 'text-fm-text' },
   ];
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-gray-900/60 backdrop-blur-xl border border-gray-800/50 rounded-2xl p-5"
+      className="bg-fm-surface border border-fm-border shadow-fm-sm rounded-xl p-6"
     >
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-semibold text-gray-300">Cuenta Capital.com</h3>
+      <div className="flex items-center justify-between mb-5">
+        <h3 className="text-base font-semibold text-fm-text">Cuenta Capital.com</h3>
         <ConnectionBadge connected={account.connected} />
       </div>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {stats.map(({ label, value, color }) => (
-          <div key={label} className="bg-gray-800/40 rounded-xl p-3">
-            <p className="text-[10px] md:text-xs text-gray-500 mb-1">{label}</p>
-            <p className={`text-sm md:text-base font-bold ${color}`}>{value}</p>
+          <div key={label} className="bg-fm-surface-2 rounded-lg p-4">
+            <p className="text-xs text-fm-text-2 mb-1">{label}</p>
+            <p className={`text-base font-semibold font-mono tabular-nums ${color}`}>{value}</p>
           </div>
         ))}
       </div>
@@ -76,29 +92,34 @@ function AccountCard({ account, isLoading }) {
 
 function PositionCard({ position }) {
   const isBuy = position.direction === 'BUY';
-  const pnlColor = position.unrealized_pnl >= 0 ? 'text-emerald-400' : 'text-red-400';
+  const pnlColor = position.unrealized_pnl >= 0 ? 'text-fm-success' : 'text-fm-danger';
   const DirIcon = isBuy ? ArrowTrendingUpIcon : ArrowTrendingDownIcon;
 
   return (
-    <div className="bg-gray-800/40 rounded-xl p-4 flex items-center justify-between">
-      <div className="flex items-center space-x-3">
-        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-          isBuy ? 'bg-emerald-500/15' : 'bg-red-500/15'
-        }`}>
-          <DirIcon className={`w-4 h-4 ${isBuy ? 'text-emerald-400' : 'text-red-400'}`} />
+    <div className="bg-fm-surface-2 rounded-lg p-4 flex items-center justify-between">
+      <div className="flex items-center gap-3">
+        <div
+          className={`w-9 h-9 rounded-lg flex items-center justify-center ${
+            isBuy ? 'bg-fm-success-soft' : 'bg-fm-danger-soft'
+          }`}
+        >
+          <DirIcon className={`w-4 h-4 ${isBuy ? 'text-fm-success' : 'text-fm-danger'}`} />
         </div>
         <div>
-          <p className="text-sm font-semibold text-white">{position.instrument.replace('_', '/')}</p>
-          <p className="text-[10px] text-gray-500">
+          <p className="text-sm font-semibold text-fm-text">
+            {position.instrument.replace('_', '/')}
+          </p>
+          <p className="text-xs text-fm-text-dim">
             {position.units} units @ {position.entry_price}
           </p>
         </div>
       </div>
       <div className="text-right">
-        <p className={`text-sm font-bold ${pnlColor}`}>
-          {position.unrealized_pnl >= 0 ? '+' : ''}{position.unrealized_pnl?.toFixed(2)}
+        <p className={`text-sm font-semibold font-mono tabular-nums ${pnlColor}`}>
+          {position.unrealized_pnl >= 0 ? '+' : ''}
+          {position.unrealized_pnl?.toFixed(2)}
         </p>
-        <p className="text-[10px] text-gray-500">
+        <p className="text-xs text-fm-text-dim font-mono">
           SL: {position.stop_loss || '—'} | TP: {position.take_profit || '—'}
         </p>
       </div>
@@ -109,11 +130,11 @@ function PositionCard({ position }) {
 function PositionsSection({ positions, isLoading }) {
   if (isLoading) {
     return (
-      <div className="bg-gray-900/60 backdrop-blur-xl border border-gray-800/50 rounded-2xl p-5 animate-pulse">
-        <div className="h-4 bg-gray-800 rounded w-40 mb-4" />
+      <div className="bg-fm-surface border border-fm-border shadow-fm-sm rounded-xl p-6 animate-pulse">
+        <div className="h-4 bg-fm-surface-2 rounded w-40 mb-4" />
         <div className="space-y-3">
           {[...Array(2)].map((_, i) => (
-            <div key={i} className="h-16 bg-gray-800 rounded-xl" />
+            <div key={i} className="h-16 bg-fm-surface-2 rounded-lg" />
           ))}
         </div>
       </div>
@@ -122,18 +143,19 @@ function PositionsSection({ positions, isLoading }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.1 }}
-      className="bg-gray-900/60 backdrop-blur-xl border border-gray-800/50 rounded-2xl p-5"
+      transition={{ delay: 0.05 }}
+      className="bg-fm-surface border border-fm-border shadow-fm-sm rounded-xl p-6"
     >
-      <h3 className="text-sm font-semibold text-gray-300 mb-4">
-        Posiciones Abiertas ({positions?.length || 0})
+      <h3 className="text-base font-semibold text-fm-text mb-4">
+        Posiciones abiertas{' '}
+        <span className="text-fm-text-dim font-normal">({positions?.length || 0})</span>
       </h3>
-      {(!positions || positions.length === 0) ? (
-        <div className="text-center py-8">
-          <SignalIcon className="w-8 h-8 text-gray-700 mx-auto mb-2" />
-          <p className="text-xs text-gray-600">Sin posiciones abiertas</p>
+      {!positions || positions.length === 0 ? (
+        <div className="text-center py-10">
+          <SignalIcon className="w-10 h-10 text-fm-text-dim/50 mx-auto mb-2" />
+          <p className="text-sm text-fm-text-dim">Sin posiciones abiertas</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -149,17 +171,17 @@ function PositionsSection({ positions, isLoading }) {
 function SyncSection({ syncData, isLoading, onSync, isSyncing }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.2 }}
-      className="bg-gray-900/60 backdrop-blur-xl border border-gray-800/50 rounded-2xl p-5"
+      transition={{ delay: 0.1 }}
+      className="bg-fm-surface border border-fm-border shadow-fm-sm rounded-xl p-6"
     >
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-semibold text-gray-300">Sincronizacion</h3>
+        <h3 className="text-base font-semibold text-fm-text">Sincronización</h3>
         <button
           onClick={onSync}
           disabled={isSyncing}
-          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 transition-colors disabled:opacity-50"
+          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-fm-primary-soft text-fm-primary hover:bg-fm-primary/15 transition-colors disabled:opacity-50 focus-ring"
         >
           <ArrowPathIcon className={`w-3.5 h-3.5 mr-1.5 ${isSyncing ? 'animate-spin' : ''}`} />
           Sincronizar
@@ -168,47 +190,62 @@ function SyncSection({ syncData, isLoading, onSync, isSyncing }) {
 
       {isLoading ? (
         <div className="space-y-2 animate-pulse">
-          <div className="h-8 bg-gray-800 rounded-xl" />
-          <div className="h-8 bg-gray-800 rounded-xl" />
+          <div className="h-8 bg-fm-surface-2 rounded-lg" />
+          <div className="h-8 bg-fm-surface-2 rounded-lg" />
         </div>
       ) : syncData ? (
         <div className="space-y-3">
-          <div className="flex items-center justify-between bg-gray-800/40 rounded-xl p-3">
-            <span className="text-xs text-gray-400">Estado</span>
-            <span className={`inline-flex items-center text-xs font-semibold ${
-              syncData.is_synced ? 'text-emerald-400' : 'text-amber-400'
-            }`}>
+          <div className="flex items-center justify-between bg-fm-surface-2 rounded-lg p-3">
+            <span className="text-xs text-fm-text-2">Estado</span>
+            <span
+              className={`inline-flex items-center text-xs font-semibold ${
+                syncData.is_synced ? 'text-fm-success' : 'text-fm-warning'
+              }`}
+            >
               {syncData.is_synced ? (
-                <><CheckCircleIcon className="w-4 h-4 mr-1" /> Sincronizado</>
+                <>
+                  <CheckCircleIcon className="w-4 h-4 mr-1" /> Sincronizado
+                </>
               ) : (
-                <><ExclamationTriangleIcon className="w-4 h-4 mr-1" /> Discrepancias</>
+                <>
+                  <ExclamationTriangleIcon className="w-4 h-4 mr-1" /> Discrepancias
+                </>
               )}
             </span>
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <div className="bg-gray-800/40 rounded-xl p-3">
-              <p className="text-[10px] text-gray-500">Trades Locales</p>
-              <p className="text-sm font-bold text-white">{syncData.local_open_trades}</p>
+            <div className="bg-fm-surface-2 rounded-lg p-3">
+              <p className="text-xs text-fm-text-dim">Trades locales</p>
+              <p className="text-base font-semibold text-fm-text font-mono">
+                {syncData.local_open_trades}
+              </p>
             </div>
-            <div className="bg-gray-800/40 rounded-xl p-3">
-              <p className="text-[10px] text-gray-500">Trades Broker</p>
-              <p className="text-sm font-bold text-white">{syncData.broker_open_trades}</p>
+            <div className="bg-fm-surface-2 rounded-lg p-3">
+              <p className="text-xs text-fm-text-dim">Trades broker</p>
+              <p className="text-base font-semibold text-fm-text font-mono">
+                {syncData.broker_open_trades}
+              </p>
             </div>
           </div>
           {syncData.discrepancies?.length > 0 && (
             <div className="space-y-1">
-              <p className="text-xs text-amber-400 font-medium">Discrepancias:</p>
+              <p className="text-xs text-fm-warning font-medium">Discrepancias:</p>
               {syncData.discrepancies.map((d, i) => (
-                <div key={i} className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-2">
-                  <p className="text-[10px] text-amber-300">{d.sync_type}</p>
-                  <p className="text-[10px] text-gray-400">Local: {d.local_value} | Broker: {d.broker_value}</p>
+                <div
+                  key={i}
+                  className="bg-fm-warning-soft border border-fm-warning/20 rounded-lg p-2"
+                >
+                  <p className="text-xs text-fm-warning">{d.sync_type}</p>
+                  <p className="text-xs text-fm-text-dim">
+                    Local: {d.local_value} | Broker: {d.broker_value}
+                  </p>
                 </div>
               ))}
             </div>
           )}
         </div>
       ) : (
-        <p className="text-xs text-gray-600 text-center py-4">Sin datos de sincronizacion</p>
+        <p className="text-sm text-fm-text-dim text-center py-4">Sin datos de sincronización</p>
       )}
     </motion.div>
   );
@@ -217,11 +254,11 @@ function SyncSection({ syncData, isLoading, onSync, isSyncing }) {
 function MarketStateSection({ marketData, isLoading }) {
   if (isLoading) {
     return (
-      <div className="bg-gray-900/60 backdrop-blur-xl border border-gray-800/50 rounded-2xl p-5 animate-pulse">
-        <div className="h-4 bg-gray-800 rounded w-40 mb-4" />
+      <div className="bg-fm-surface border border-fm-border shadow-fm-sm rounded-xl p-6 animate-pulse">
+        <div className="h-4 bg-fm-surface-2 rounded w-40 mb-4" />
         <div className="space-y-3">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-24 bg-gray-800 rounded-xl" />
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="h-24 bg-fm-surface-2 rounded-lg" />
           ))}
         </div>
       </div>
@@ -231,113 +268,133 @@ function MarketStateSection({ marketData, isLoading }) {
   if (!marketData) return null;
 
   const trendColors = {
-    UP: 'text-emerald-400 bg-emerald-500/15',
-    DOWN: 'text-red-400 bg-red-500/15',
-    RANGE: 'text-amber-400 bg-amber-500/15',
+    UP: 'text-fm-success bg-fm-success-soft',
+    DOWN: 'text-fm-danger bg-fm-danger-soft',
+    RANGE: 'text-fm-warning bg-fm-warning-soft',
   };
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.3 }}
-      className="bg-gray-900/60 backdrop-blur-xl border border-gray-800/50 rounded-2xl p-5"
+      transition={{ delay: 0.15 }}
+      className="bg-fm-surface border border-fm-border shadow-fm-sm rounded-xl p-6"
     >
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-semibold text-gray-300">Estado del Mercado</h3>
-        <div className="flex items-center space-x-2">
-          {marketData.market_open ? (
-            <span className="text-[10px] text-emerald-400 font-medium">Mercado Abierto</span>
-          ) : (
-            <span className="text-[10px] text-red-400 font-medium">Mercado Cerrado</span>
-          )}
+      <div className="flex items-center justify-between mb-5">
+        <h3 className="text-base font-semibold text-fm-text">Estado del mercado</h3>
+        <div className="flex items-center gap-2">
+          <span
+            className={`text-xs font-medium ${
+              marketData.market_open ? 'text-fm-success' : 'text-fm-danger'
+            }`}
+          >
+            {marketData.market_open ? 'Mercado abierto' : 'Mercado cerrado'}
+          </span>
           {marketData.current_session && (
-            <span className="text-[10px] bg-blue-500/15 text-blue-400 px-2 py-0.5 rounded-full">
+            <span className="text-xs bg-fm-primary-soft text-fm-primary px-2 py-0.5 rounded-full font-medium">
               {marketData.current_session}
             </span>
           )}
         </div>
       </div>
 
-      {(!marketData.instruments || marketData.instruments.length === 0) ? (
-        <div className="text-center py-8">
-          <SignalIcon className="w-8 h-8 text-gray-700 mx-auto mb-2" />
-          <p className="text-xs text-gray-600">
-            {marketData.market_open ? 'Cargando datos...' : 'Mercado cerrado — sin datos en tiempo real'}
+      {!marketData.instruments || marketData.instruments.length === 0 ? (
+        <div className="text-center py-10">
+          <SignalIcon className="w-10 h-10 text-fm-text-dim/50 mx-auto mb-2" />
+          <p className="text-sm text-fm-text-dim">
+            {marketData.market_open
+              ? 'Cargando datos...'
+              : 'Mercado cerrado — sin datos en tiempo real'}
           </p>
         </div>
       ) : (
         <div className="space-y-3">
           {marketData.instruments.map((inst) => (
-            <div key={inst.instrument} className="bg-gray-800/40 rounded-xl p-4">
+            <div key={inst.instrument} className="bg-fm-surface-2 rounded-lg p-4">
               <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center space-x-2">
-                  <span className="text-sm font-bold text-white">{inst.instrument.replace('_', '/')}</span>
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${trendColors[inst.trend_state] || trendColors.RANGE}`}>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-fm-text">
+                    {inst.instrument.replace('_', '/')}
+                  </span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                      trendColors[inst.trend_state] || trendColors.RANGE
+                    }`}
+                  >
                     {inst.trend_state}
                   </span>
                 </div>
-                <span className="text-sm font-mono text-white">{inst.price}</span>
+                <span className="text-sm font-mono tabular-nums text-fm-text">{inst.price}</span>
               </div>
 
-              {/* Indicators */}
-              <div className="grid grid-cols-3 gap-2 mb-3 text-[10px]">
+              <div className="grid grid-cols-3 gap-2 mb-3 text-xs">
                 <div>
-                  <span className="text-gray-500">SMA200</span>
-                  <span className={`ml-1 font-medium ${inst.price_vs_sma200 === 'ABOVE' ? 'text-emerald-400' : 'text-red-400'}`}>
+                  <span className="text-fm-text-dim">SMA200 </span>
+                  <span
+                    className={`font-medium ${
+                      inst.price_vs_sma200 === 'ABOVE' ? 'text-fm-success' : 'text-fm-danger'
+                    }`}
+                  >
                     {inst.price_vs_sma200}
                   </span>
                 </div>
                 <div>
-                  <span className="text-gray-500">MA State</span>
-                  <span className={`ml-1 font-medium ${
-                    inst.ma_state === 'WIDE' ? 'text-emerald-400' : inst.ma_state === 'NARROW' ? 'text-amber-400' : 'text-gray-300'
-                  }`}>
+                  <span className="text-fm-text-dim">MA </span>
+                  <span
+                    className={`font-medium ${
+                      inst.ma_state === 'WIDE'
+                        ? 'text-fm-success'
+                        : inst.ma_state === 'NARROW'
+                        ? 'text-fm-warning'
+                        : 'text-fm-text-2'
+                    }`}
+                  >
                     {inst.ma_state}
                   </span>
                 </div>
                 <div>
-                  <span className="text-gray-500">Trampa</span>
-                  <span className={`ml-1 font-medium ${inst.trap_zone ? 'text-red-400' : 'text-emerald-400'}`}>
-                    {inst.trap_zone ? 'SI' : 'NO'}
+                  <span className="text-fm-text-dim">Trampa </span>
+                  <span
+                    className={`font-medium ${inst.trap_zone ? 'text-fm-danger' : 'text-fm-success'}`}
+                  >
+                    {inst.trap_zone ? 'Sí' : 'No'}
                   </span>
                 </div>
               </div>
 
-              {/* Context Filters */}
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <p className="text-[10px] text-gray-500 mb-1">Filtros LONG</p>
+                  <p className="text-[11px] text-fm-text-dim mb-1">Filtros LONG</p>
                   <div className="flex flex-wrap gap-1">
                     {inst.filters_long?.map((f) => (
                       <span
                         key={f.name}
-                        className={`px-1.5 py-0.5 rounded text-[8px] font-medium ${
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
                           f.passed
-                            ? 'bg-emerald-500/10 text-emerald-400'
-                            : 'bg-red-500/10 text-red-400'
+                            ? 'bg-fm-success-soft text-fm-success'
+                            : 'bg-fm-danger-soft text-fm-danger'
                         }`}
                         title={f.name}
                       >
-                        {f.passed ? '\u2713' : '\u2717'}
+                        {f.passed ? '✓' : '✗'}
                       </span>
                     ))}
                   </div>
                 </div>
                 <div>
-                  <p className="text-[10px] text-gray-500 mb-1">Filtros SHORT</p>
+                  <p className="text-[11px] text-fm-text-dim mb-1">Filtros SHORT</p>
                   <div className="flex flex-wrap gap-1">
                     {inst.filters_short?.map((f) => (
                       <span
                         key={f.name}
-                        className={`px-1.5 py-0.5 rounded text-[8px] font-medium ${
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
                           f.passed
-                            ? 'bg-emerald-500/10 text-emerald-400'
-                            : 'bg-red-500/10 text-red-400'
+                            ? 'bg-fm-success-soft text-fm-success'
+                            : 'bg-fm-danger-soft text-fm-danger'
                         }`}
                         title={f.name}
                       >
-                        {f.passed ? '\u2713' : '\u2717'}
+                        {f.passed ? '✓' : '✗'}
                       </span>
                     ))}
                   </div>
@@ -362,50 +419,32 @@ export function BrokerPage() {
   const isLive = envData?.environment === 'LIVE';
 
   return (
-    <div className="space-y-4 md:space-y-6">
-      {/* Header: entorno broker prominente */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        className={`rounded-2xl border p-4 md:p-5 ${
+    <>
+      <PageHeader
+        title="Broker"
+        description={
           isLive
-            ? 'bg-tv-down/8 border-tv-down/40'
-            : 'bg-tv-blue/8 border-tv-blue/30'
-        }`}
-      >
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-3">
-            <div>
-              <div className="text-[10px] uppercase tracking-wider text-tv-text-dim leading-none">
-                Cuenta Capital.com
-              </div>
-              <div className={`text-sm font-bold mt-1 ${isLive ? 'text-tv-down' : 'text-tv-blue'}`}>
-                {isLive ? 'CUENTA REAL — OPERANDO CON DINERO REAL' : 'CUENTA DEMO — Dinero simulado'}
-              </div>
-              <div className="text-[11px] text-tv-text-dim mt-0.5">
-                {isLive
-                  ? 'Solo S1 Pullback EMA20 ejecutará trades. Máximo 1 posición abierta.'
-                  : 'Todas las estrategias operan libremente con fondos de prueba.'}
-              </div>
-            </div>
-          </div>
-          <AccountSelector />
+            ? 'Operando con cuenta REAL de Capital.com. Solo S1 ejecuta trades.'
+            : 'Operando con cuenta DEMO. Todas las estrategias activas.'
+        }
+        actions={<AccountSelector />}
+      />
+
+      <div className="space-y-5">
+        <AccountCard account={account} isLoading={loadingAccount} />
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <PositionsSection positions={positions} isLoading={loadingPositions} />
+          <SyncSection
+            syncData={syncData}
+            isLoading={loadingSync}
+            onSync={() => syncMutation.mutate()}
+            isSyncing={syncMutation.isPending}
+          />
         </div>
-      </motion.div>
 
-      <AccountCard account={account} isLoading={loadingAccount} />
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
-        <PositionsSection positions={positions} isLoading={loadingPositions} />
-        <SyncSection
-          syncData={syncData}
-          isLoading={loadingSync}
-          onSync={() => syncMutation.mutate()}
-          isSyncing={syncMutation.isPending}
-        />
+        <MarketStateSection marketData={marketData} isLoading={loadingMarket} />
       </div>
-
-      <MarketStateSection marketData={marketData} isLoading={loadingMarket} />
-    </div>
+    </>
   );
 }

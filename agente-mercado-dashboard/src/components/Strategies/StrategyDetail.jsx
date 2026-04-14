@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-  ArrowLeftIcon,
   BookOpenIcon,
   ChartBarIcon,
   ChartBarSquareIcon,
@@ -10,6 +9,7 @@ import {
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 import { TradeChart } from '../TradeChart';
+import { PageHeader } from '../Layout/PageHeader';
 import {
   useStrategyTrades,
   useStrategyBitacora,
@@ -23,15 +23,45 @@ function DetailTab({ label, icon: Icon, active, onClick }) {
   return (
     <button
       onClick={onClick}
-      className={`inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+      className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors focus-ring ${
         active
-          ? 'bg-blue-500/15 text-blue-400'
-          : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'
+          ? 'bg-fm-primary-soft text-fm-primary'
+          : 'text-fm-text-2 hover:text-fm-text hover:bg-fm-surface-2'
       }`}
     >
-      <Icon className="w-3.5 h-3.5 mr-1" />
+      <Icon className="w-3.5 h-3.5" />
       {label}
     </button>
+  );
+}
+
+function LoadingSpinner() {
+  return (
+    <div className="flex items-center justify-center py-10">
+      <div className="w-6 h-6 border-2 border-fm-border border-t-fm-primary rounded-full animate-spin" />
+    </div>
+  );
+}
+
+function EmptyState({ text }) {
+  return (
+    <div className="text-center py-10 bg-fm-surface border border-fm-border rounded-xl">
+      <p className="text-sm text-fm-text-dim">{text}</p>
+    </div>
+  );
+}
+
+function DirectionPill({ direction }) {
+  return (
+    <span
+      className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+        direction === 'BUY'
+          ? 'bg-fm-success-soft text-fm-success'
+          : 'bg-fm-danger-soft text-fm-danger'
+      }`}
+    >
+      {direction}
+    </span>
   );
 }
 
@@ -40,7 +70,7 @@ function TradesSection({ strategyId }) {
   const [chartTradeId, setChartTradeId] = useState(null);
 
   if (isLoading) return <LoadingSpinner />;
-  if (!trades?.length) return <EmptyState text="Sin trades todavia" />;
+  if (!trades?.length) return <EmptyState text="Sin trades todavía" />;
 
   return (
     <>
@@ -48,41 +78,36 @@ function TradesSection({ strategyId }) {
         {trades.map((t) => (
           <div
             key={t.id}
-            className="bg-gray-900/50 rounded-xl border border-gray-700/30 p-3 cursor-pointer hover:border-blue-500/30 transition-colors"
+            className="bg-fm-surface border border-fm-border rounded-lg p-3 cursor-pointer hover:border-fm-primary/30 transition-colors"
             onClick={() => setChartTradeId(t.id)}
           >
             <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <span
-                  className={`px-1.5 py-0.5 rounded text-xs font-bold ${
-                    t.direction === 'BUY'
-                      ? 'bg-emerald-500/20 text-emerald-400'
-                      : 'bg-red-500/20 text-red-400'
-                  }`}
-                >
-                  {t.direction}
-                </span>
-                <span className="text-sm font-medium text-white">{t.symbol}</span>
+              <div className="flex items-center gap-2">
+                <DirectionPill direction={t.direction} />
+                <span className="text-sm font-medium text-fm-text">{t.symbol}</span>
               </div>
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center gap-2">
                 <span
-                  className={`text-sm font-bold ${
-                    t.pnl > 0 ? 'text-emerald-400' : t.pnl < 0 ? 'text-red-400' : 'text-gray-400'
+                  className={`text-sm font-semibold font-mono tabular-nums ${
+                    t.pnl > 0 ? 'text-fm-success' : t.pnl < 0 ? 'text-fm-danger' : 'text-fm-text-dim'
                   }`}
                 >
-                  {t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(4)}` : '-'}
+                  {t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(4)}` : '—'}
                 </span>
-                <ChartBarSquareIcon className="w-4 h-4 text-gray-500" />
+                <ChartBarSquareIcon className="w-4 h-4 text-fm-text-dim" />
               </div>
             </div>
-            <div className="flex items-center justify-between mt-1.5 text-xs text-gray-500">
+            <div className="flex items-center justify-between mt-2 text-xs text-fm-text-dim">
               <span>Size: ${t.size_usd?.toFixed(2)}</span>
               <span>
                 {t.status === 'OPEN' ? (
-                  <span className="text-blue-400">Abierta</span>
+                  <span className="text-fm-primary">Abierta</span>
                 ) : (
                   new Date(t.closed_at).toLocaleString('es', {
-                    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
                   })
                 )}
               </span>
@@ -90,7 +115,6 @@ function TradesSection({ strategyId }) {
           </div>
         ))}
       </div>
-
       {chartTradeId && (
         <TradeChart tradeId={chartTradeId} onClose={() => setChartTradeId(null)} />
       )}
@@ -102,34 +126,25 @@ function BitacoraSection({ strategyId }) {
   const { data: entries, isLoading } = useStrategyBitacora(strategyId);
 
   if (isLoading) return <LoadingSpinner />;
-  if (!entries?.length) return <EmptyState text="Sin entradas de bitacora" />;
+  if (!entries?.length) return <EmptyState text="Sin entradas de bitácora" />;
 
   return (
     <div className="space-y-3">
       {entries.map((b) => (
         <div
           key={b.id}
-          className="bg-gray-900/50 rounded-xl border border-gray-700/30 p-4 space-y-2"
+          className="bg-fm-surface border border-fm-border rounded-lg p-4 space-y-3 shadow-fm-sm"
         >
-          {/* Header */}
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <span
-                className={`px-1.5 py-0.5 rounded text-xs font-bold ${
-                  b.direction === 'BUY'
-                    ? 'bg-emerald-500/20 text-emerald-400'
-                    : 'bg-red-500/20 text-red-400'
-                }`}
-              >
-                {b.direction}
-              </span>
-              <span className="text-sm font-medium text-white">{b.symbol}</span>
+            <div className="flex items-center gap-2">
+              <DirectionPill direction={b.direction} />
+              <span className="text-sm font-medium text-fm-text">{b.symbol}</span>
             </div>
-            <div className="text-right">
+            <div className="flex items-center gap-2">
               {b.pnl != null && (
                 <span
-                  className={`text-sm font-bold ${
-                    b.pnl > 0 ? 'text-emerald-400' : 'text-red-400'
+                  className={`text-sm font-semibold font-mono tabular-nums ${
+                    b.pnl > 0 ? 'text-fm-success' : 'text-fm-danger'
                   }`}
                 >
                   {b.pnl >= 0 ? '+' : ''}${b.pnl.toFixed(4)}
@@ -137,10 +152,10 @@ function BitacoraSection({ strategyId }) {
               )}
               {b.exit_reason && (
                 <span
-                  className={`ml-2 text-xs px-1.5 py-0.5 rounded ${
+                  className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                     b.exit_reason === 'TAKE_PROFIT'
-                      ? 'bg-emerald-500/15 text-emerald-400'
-                      : 'bg-red-500/15 text-red-400'
+                      ? 'bg-fm-success-soft text-fm-success'
+                      : 'bg-fm-danger-soft text-fm-danger'
                   }`}
                 >
                   {b.exit_reason === 'TAKE_PROFIT' ? 'TP' : 'SL'}
@@ -149,27 +164,27 @@ function BitacoraSection({ strategyId }) {
             </div>
           </div>
 
-          {/* Entry reasoning */}
           {b.entry_reasoning && (
-            <div className="bg-gray-800/50 rounded-lg p-2.5">
-              <p className="text-xs text-gray-400 font-medium mb-0.5">Razonamiento:</p>
-              <p className="text-xs text-gray-300">{b.entry_reasoning}</p>
+            <div className="bg-fm-surface-2 rounded-lg p-3">
+              <p className="text-xs text-fm-text-dim font-medium mb-1">Razonamiento</p>
+              <p className="text-sm text-fm-text-2">{b.entry_reasoning}</p>
             </div>
           )}
 
-          {/* Lesson */}
           {b.lesson && (
-            <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-2.5">
-              <p className="text-xs text-blue-400 font-medium mb-0.5">Leccion:</p>
-              <p className="text-xs text-blue-200">{b.lesson}</p>
+            <div className="bg-fm-primary-soft border border-fm-primary/15 rounded-lg p-3">
+              <p className="text-xs text-fm-primary font-medium mb-1">Lección</p>
+              <p className="text-sm text-fm-text-2">{b.lesson}</p>
             </div>
           )}
 
-          {/* Timing */}
-          <div className="flex items-center justify-between text-xs text-gray-500">
+          <div className="flex items-center justify-between text-xs text-fm-text-dim">
             <span>
               {new Date(b.entry_time).toLocaleString('es', {
-                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
               })}
             </span>
             {b.hold_duration_minutes != null && (
@@ -186,38 +201,37 @@ function ReportsSection({ strategyId }) {
   const { data: reports, isLoading } = useStrategyReports(strategyId);
 
   if (isLoading) return <LoadingSpinner />;
-  if (!reports?.length) return <EmptyState text="Sin reportes de aprendizaje (se generan cada 15 trades cerrados)" />;
+  if (!reports?.length)
+    return <EmptyState text="Sin reportes (se generan cada 15 trades cerrados)" />;
 
   return (
     <div className="space-y-4">
       {reports.map((r) => (
         <div
           key={r.id}
-          className="bg-gray-900/50 rounded-xl border border-gray-700/30 p-4 space-y-3"
+          className="bg-fm-surface border border-fm-border rounded-lg p-5 shadow-fm-sm space-y-3"
         >
           <div className="flex items-center justify-between">
-            <h4 className="text-sm font-bold text-white">
-              Reporte #{r.report_number}
-            </h4>
-            <span className="text-xs text-gray-500">
-              {r.trades_analyzed} trades analizados
-            </span>
+            <h4 className="text-sm font-semibold text-fm-text">Reporte #{r.report_number}</h4>
+            <span className="text-xs text-fm-text-dim">{r.trades_analyzed} trades</span>
           </div>
 
           {r.analysis && (
-            <div className="bg-gray-800/50 rounded-lg p-3">
-              <p className="text-xs text-gray-300 whitespace-pre-wrap">{r.analysis}</p>
+            <div className="bg-fm-surface-2 rounded-lg p-3">
+              <p className="text-sm text-fm-text-2 whitespace-pre-wrap leading-relaxed">
+                {r.analysis}
+              </p>
             </div>
           )}
 
           {r.recommendations?.length > 0 && (
             <div>
-              <p className="text-xs text-gray-400 font-medium mb-1">Recomendaciones:</p>
+              <p className="text-xs text-fm-text-2 font-medium mb-1">Recomendaciones</p>
               <ul className="space-y-1">
                 {r.recommendations.map((rec, i) => (
-                  <li key={i} className="text-xs text-gray-300 flex items-start">
-                    <span className="text-blue-400 mr-1.5 mt-0.5">-</span>
-                    {rec}
+                  <li key={i} className="text-sm text-fm-text-2 flex gap-2">
+                    <span className="text-fm-primary">•</span>
+                    <span>{rec}</span>
                   </li>
                 ))}
               </ul>
@@ -225,35 +239,22 @@ function ReportsSection({ strategyId }) {
           )}
 
           {r.stats_snapshot && (
-            <div className="grid grid-cols-4 gap-2 pt-2 border-t border-gray-700/30">
-              <div className="text-center">
-                <p className="text-xs text-gray-500">WR</p>
-                <p className="text-xs font-bold text-white">
-                  {((r.stats_snapshot.win_rate || 0) * 100).toFixed(0)}%
-                </p>
-              </div>
-              <div className="text-center">
-                <p className="text-xs text-gray-500">PF</p>
-                <p className="text-xs font-bold text-white">
-                  {(r.stats_snapshot.profit_factor || 0).toFixed(2)}
-                </p>
-              </div>
-              <div className="text-center">
-                <p className="text-xs text-gray-500">Sortino</p>
-                <p className="text-xs font-bold text-white">
-                  {(r.stats_snapshot.sortino || 0).toFixed(2)}
-                </p>
-              </div>
-              <div className="text-center">
-                <p className="text-xs text-gray-500">Trades</p>
-                <p className="text-xs font-bold text-white">
-                  {r.stats_snapshot.total_trades || 0}
-                </p>
-              </div>
+            <div className="grid grid-cols-4 gap-2 pt-3 border-t border-fm-border">
+              {[
+                ['WR', `${((r.stats_snapshot.win_rate || 0) * 100).toFixed(0)}%`],
+                ['PF', (r.stats_snapshot.profit_factor || 0).toFixed(2)],
+                ['Sortino', (r.stats_snapshot.sortino || 0).toFixed(2)],
+                ['Trades', r.stats_snapshot.total_trades || 0],
+              ].map(([label, value]) => (
+                <div key={label} className="text-center">
+                  <p className="text-xs text-fm-text-dim">{label}</p>
+                  <p className="text-sm font-semibold text-fm-text font-mono">{value}</p>
+                </div>
+              ))}
             </div>
           )}
 
-          <p className="text-xs text-gray-600">
+          <p className="text-xs text-fm-text-dim">
             {new Date(r.created_at).toLocaleString('es')}
           </p>
         </div>
@@ -268,40 +269,46 @@ function PerformanceSection({ strategyId }) {
   if (isLoading) return <LoadingSpinner />;
   if (!perf || !perf.data_sufficient) {
     return (
-      <EmptyState
-        text={`Datos insuficientes: ${perf?.total_trades || 0}/30 trades necesarios`}
-      />
+      <EmptyState text={`Datos insuficientes: ${perf?.total_trades || 0}/30 trades necesarios`} />
     );
   }
 
   return (
     <div className="space-y-4">
-      {/* Global metrics */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { label: 'Win Rate', value: `${(perf.win_rate * 100).toFixed(0)}%` },
           { label: 'Profit Factor', value: perf.profit_factor.toFixed(2) },
           { label: 'Sortino', value: perf.sortino_ratio.toFixed(2) },
           { label: 'Expectancy', value: `$${perf.expectancy.toFixed(4)}` },
         ].map((m) => (
-          <div key={m.label} className="bg-gray-900/50 rounded-xl border border-gray-700/30 p-3 text-center">
-            <p className="text-xs text-gray-500">{m.label}</p>
-            <p className="text-sm font-bold text-white mt-0.5">{m.value}</p>
+          <div
+            key={m.label}
+            className="bg-fm-surface border border-fm-border rounded-lg p-4 text-center shadow-fm-sm"
+          >
+            <p className="text-xs text-fm-text-dim">{m.label}</p>
+            <p className="text-lg font-semibold text-fm-text font-mono tabular-nums mt-1">
+              {m.value}
+            </p>
           </div>
         ))}
       </div>
 
-      {/* Best/Worst symbols */}
       {perf.best_symbols?.length > 0 && (
         <div>
-          <p className="text-xs text-gray-400 font-medium mb-2">Mejores Simbolos</p>
+          <p className="text-sm text-fm-text-2 font-medium mb-2">Mejores símbolos</p>
           <div className="space-y-1.5">
             {perf.best_symbols.map((s) => (
-              <div key={s.symbol} className="flex items-center justify-between bg-gray-900/30 rounded-lg px-3 py-1.5">
-                <span className="text-xs text-white font-medium">{s.symbol}</span>
-                <div className="flex items-center space-x-3 text-xs">
-                  <span className="text-gray-400">WR {(s.win_rate * 100).toFixed(0)}%</span>
-                  <span className={s.total_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+              <div
+                key={s.symbol}
+                className="flex items-center justify-between bg-fm-surface border border-fm-border rounded-lg px-4 py-2"
+              >
+                <span className="text-sm text-fm-text font-medium">{s.symbol}</span>
+                <div className="flex items-center gap-4 text-sm font-mono">
+                  <span className="text-fm-text-2">WR {(s.win_rate * 100).toFixed(0)}%</span>
+                  <span
+                    className={s.total_pnl >= 0 ? 'text-fm-success' : 'text-fm-danger'}
+                  >
                     ${s.total_pnl.toFixed(4)}
                   </span>
                 </div>
@@ -311,12 +318,13 @@ function PerformanceSection({ strategyId }) {
         </div>
       )}
 
-      {/* Recommendations */}
       {perf.recommendations?.length > 0 && (
-        <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-3">
-          <p className="text-xs text-amber-400 font-medium mb-1.5">Recomendaciones</p>
+        <div className="bg-fm-warning-soft border border-fm-warning/20 rounded-lg p-4">
+          <p className="text-sm text-fm-warning font-semibold mb-2">Recomendaciones</p>
           {perf.recommendations.map((r, i) => (
-            <p key={i} className="text-xs text-gray-300 mb-1">- {r}</p>
+            <p key={i} className="text-sm text-fm-text-2 mb-1">
+              • {r}
+            </p>
           ))}
         </div>
       )}
@@ -331,31 +339,26 @@ function RulesSection({ strategyId }) {
   if (loadingRules || loadingCycles) return <LoadingSpinner />;
 
   return (
-    <div className="space-y-4">
-      {/* Active Rules */}
+    <div className="space-y-5">
       <div>
-        <h4 className="text-sm font-bold text-white mb-2">
-          Reglas Permanentes ({rules?.length || 0})
+        <h4 className="text-sm font-semibold text-fm-text mb-2">
+          Reglas permanentes ({rules?.length || 0})
         </h4>
         {!rules?.length ? (
-          <EmptyState text="Sin reglas todavia (se generan cada 20 trades cerrados)" />
+          <EmptyState text="Sin reglas todavía (se generan cada 20 trades cerrados)" />
         ) : (
           <div className="space-y-2">
             {rules.map((r) => (
               <div
                 key={r.id}
-                className="bg-gray-900/50 rounded-xl border border-amber-500/20 p-3 space-y-1.5"
+                className="bg-fm-surface border border-fm-warning/30 rounded-lg p-4 space-y-2 shadow-fm-sm"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-amber-400">
-                    {r.pattern_name}
-                  </span>
-                  <span className="text-xs text-gray-500">
-                    Ciclo #{r.cycle_number}
-                  </span>
+                  <span className="text-sm font-semibold text-fm-warning">{r.pattern_name}</span>
+                  <span className="text-xs text-fm-text-dim">Ciclo #{r.cycle_number}</span>
                 </div>
-                <p className="text-xs text-gray-300">{r.description}</p>
-                <div className="flex items-center space-x-3 text-xs text-gray-500">
+                <p className="text-sm text-fm-text-2">{r.description}</p>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fm-text-dim">
                   <span>Tipo: {r.rule_type}</span>
                   <span>WR antes: {(r.win_rate_before * 100).toFixed(0)}%</span>
                   <span>{r.trades_before_rule} trades</span>
@@ -366,11 +369,8 @@ function RulesSection({ strategyId }) {
         )}
       </div>
 
-      {/* Cycle History */}
       <div>
-        <h4 className="text-sm font-bold text-white mb-2">
-          Historial de Ciclos
-        </h4>
+        <h4 className="text-sm font-semibold text-fm-text mb-2">Historial de ciclos</h4>
         {!cycles?.length ? (
           <EmptyState text="Sin ciclos completados" />
         ) : (
@@ -378,19 +378,19 @@ function RulesSection({ strategyId }) {
             {cycles.map((c) => (
               <div
                 key={c.id}
-                className="bg-gray-900/50 rounded-xl border border-gray-700/30 p-3"
+                className="bg-fm-surface border border-fm-border rounded-lg p-3"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-white">
+                  <span className="text-sm font-medium text-fm-text">
                     Ciclo #{c.cycle_number}
                   </span>
                   <span
-                    className={`text-xs px-1.5 py-0.5 rounded ${
+                    className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                       c.status === 'completed'
-                        ? 'bg-emerald-500/15 text-emerald-400'
+                        ? 'bg-fm-success-soft text-fm-success'
                         : c.status === 'analyzing'
-                        ? 'bg-amber-500/15 text-amber-400'
-                        : 'bg-blue-500/15 text-blue-400'
+                        ? 'bg-fm-warning-soft text-fm-warning'
+                        : 'bg-fm-primary-soft text-fm-primary'
                     }`}
                   >
                     {c.status === 'completed'
@@ -401,12 +401,10 @@ function RulesSection({ strategyId }) {
                   </span>
                 </div>
                 {c.loss_pattern_identified && (
-                  <p className="text-xs text-gray-400 mt-1.5">
-                    {c.loss_pattern_identified}
-                  </p>
+                  <p className="text-xs text-fm-text-2 mt-2">{c.loss_pattern_identified}</p>
                 )}
                 {c.completed_at && (
-                  <p className="text-xs text-gray-600 mt-1">
+                  <p className="text-xs text-fm-text-dim mt-1">
                     {new Date(c.completed_at).toLocaleString('es', {
                       month: 'short',
                       day: 'numeric',
@@ -424,80 +422,58 @@ function RulesSection({ strategyId }) {
   );
 }
 
-function LoadingSpinner() {
-  return (
-    <div className="flex items-center justify-center py-8">
-      <div className="w-6 h-6 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
-    </div>
-  );
-}
-
-function EmptyState({ text }) {
-  return (
-    <div className="text-center py-8">
-      <p className="text-sm text-gray-500">{text}</p>
-    </div>
-  );
-}
-
 export function StrategyDetail({ strategy, onBack }) {
   const [tab, setTab] = useState('bitacora');
 
   const pnl = strategy.total_pnl || 0;
   const totalTrades = strategy.trades_won + strategy.trades_lost;
 
-  return (
-    <motion.div
-      initial={{ opacity: 0, x: 20 }}
-      animate={{ opacity: 1, x: 0 }}
-      className="space-y-4"
-    >
-      {/* Back + Header */}
-      <div className="flex items-center space-x-3">
-        <button
-          onClick={onBack}
-          className="p-2 rounded-lg hover:bg-gray-800/50 transition-colors"
-        >
-          <ArrowLeftIcon className="w-5 h-5 text-gray-400" />
-        </button>
-        <div className="flex-1">
-          <h2 className="text-lg font-bold text-white">{strategy.name}</h2>
-          <p className="text-xs text-gray-400">{strategy.description}</p>
-        </div>
-      </div>
+  const metrics = [
+    { label: 'Capital', value: `$${strategy.capital_usd?.toFixed(2)}`, color: 'text-fm-text' },
+    {
+      label: 'P&L',
+      value: `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`,
+      color: pnl > 0 ? 'text-fm-success' : pnl < 0 ? 'text-fm-danger' : 'text-fm-text',
+    },
+    {
+      label: 'Win Rate',
+      value: `${(strategy.win_rate * 100).toFixed(0)}%`,
+      color: 'text-fm-text',
+    },
+    { label: 'Trades', value: totalTrades, color: 'text-fm-text' },
+    { label: 'Abiertas', value: strategy.positions_open, color: 'text-fm-accent' },
+  ];
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-5 gap-3">
-        {[
-          { label: 'Capital', value: `$${strategy.capital_usd?.toFixed(2)}` },
-          {
-            label: 'P&L',
-            value: `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`,
-            color: pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-red-400' : 'text-white',
-          },
-          { label: 'Win Rate', value: `${(strategy.win_rate * 100).toFixed(0)}%` },
-          { label: 'Trades', value: totalTrades },
-          { label: 'Abiertas', value: strategy.positions_open },
-        ].map((m) => (
-          <div key={m.label} className="bg-gray-900/50 rounded-xl border border-gray-700/30 p-3 text-center">
-            <p className="text-xs text-gray-500">{m.label}</p>
-            <p className={`text-sm font-bold mt-0.5 ${m.color || 'text-white'}`}>
+  return (
+    <motion.div initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} className="space-y-5">
+      <PageHeader
+        title={strategy.name}
+        description={strategy.description}
+        onBack={onBack}
+      />
+
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        {metrics.map((m) => (
+          <div
+            key={m.label}
+            className="bg-fm-surface border border-fm-border rounded-lg p-3 text-center shadow-fm-sm"
+          >
+            <p className="text-xs text-fm-text-dim">{m.label}</p>
+            <p className={`text-sm font-semibold font-mono tabular-nums mt-0.5 ${m.color}`}>
               {m.value}
             </p>
           </div>
         ))}
       </div>
 
-      {/* Tabs */}
-      <div className="flex space-x-1 bg-gray-900/30 rounded-xl p-1">
-        <DetailTab label="Bitacora" icon={BookOpenIcon} active={tab === 'bitacora'} onClick={() => setTab('bitacora')} />
+      <div className="inline-flex gap-1 bg-fm-surface border border-fm-border rounded-xl p-1 overflow-x-auto">
+        <DetailTab label="Bitácora" icon={BookOpenIcon} active={tab === 'bitacora'} onClick={() => setTab('bitacora')} />
         <DetailTab label="Reglas" icon={ShieldCheckIcon} active={tab === 'rules'} onClick={() => setTab('rules')} />
         <DetailTab label="Reportes" icon={AcademicCapIcon} active={tab === 'reports'} onClick={() => setTab('reports')} />
         <DetailTab label="Trades" icon={ClipboardDocumentListIcon} active={tab === 'trades'} onClick={() => setTab('trades')} />
         <DetailTab label="Rendimiento" icon={ChartBarIcon} active={tab === 'performance'} onClick={() => setTab('performance')} />
       </div>
 
-      {/* Content */}
       <div>
         {tab === 'bitacora' && <BitacoraSection strategyId={strategy.id} />}
         {tab === 'rules' && <RulesSection strategyId={strategy.id} />}

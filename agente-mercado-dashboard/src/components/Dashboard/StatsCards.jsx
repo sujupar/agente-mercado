@@ -9,135 +9,101 @@ import {
 } from '@heroicons/react/24/outline';
 import { InfoTooltip } from '../ui/InfoTooltip';
 
-export function StatsCards({ agentData, orientation = 'grid' }) {
+export function StatsCards({ agentData }) {
   const totalPnl = agentData?.total_pnl || 0;
   const netProfit = agentData?.net_profit || 0;
   const drawdown = agentData?.drawdown_pct || 0;
+  const winRate = agentData?.win_rate || 0;
 
   const stats = [
     {
-      title: 'Capital Disponible',
-      tooltip: 'Dinero libre para abrir nuevas operaciones. El resto esta invertido en posiciones abiertas.',
+      title: 'Capital disponible',
+      tooltip: 'Dinero libre para abrir nuevas operaciones. El resto está invertido en posiciones abiertas.',
       value: `$${agentData?.capital_usd?.toFixed(2) || '0.00'}`,
       subtitle: `Pico: $${agentData?.peak_capital_usd?.toFixed(2) || '0.00'}`,
       icon: CurrencyDollarIcon,
-      color: 'text-blue-400',
-      iconBg: 'bg-blue-500/10',
-      borderColor: 'border-blue-500/20',
+      accent: 'primary',
     },
     {
-      title: 'Ganancia / Perdida',
-      tooltip: 'Cuanto has ganado o perdido en total con todas las operaciones cerradas.',
-      value: `$${totalPnl.toFixed(2)}`,
-      subtitle: `Neto (- costos): $${netProfit.toFixed(2)}`,
+      title: 'Ganancia / Pérdida',
+      tooltip: 'Cuánto has ganado o perdido en total con todas las operaciones cerradas.',
+      value: `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`,
+      subtitle: `Neto (− costos): $${netProfit.toFixed(2)}`,
       icon: ArrowTrendingUpIcon,
-      color: totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400',
-      iconBg: totalPnl >= 0 ? 'bg-emerald-500/10' : 'bg-red-500/10',
-      borderColor: totalPnl >= 0 ? 'border-emerald-500/20' : 'border-red-500/20',
+      accent: totalPnl >= 0 ? 'success' : 'danger',
     },
     {
-      title: 'Tasa de Acierto',
-      tooltip: 'Porcentaje de operaciones que terminaron en ganancia. 50%+ es bueno.',
-      value: `${agentData?.win_rate?.toFixed(1) || '0.0'}%`,
-      subtitle: `Caida max: ${(drawdown * 100).toFixed(1)}%`,
+      title: 'Tasa de acierto',
+      tooltip: 'Porcentaje de operaciones ganadoras. Con R:R 2.0 necesitas ≥33% para break-even.',
+      value: `${winRate.toFixed(1)}%`,
+      subtitle: `Caída máx: ${(drawdown * 100).toFixed(1)}%`,
       icon: ChartBarIcon,
-      color: (agentData?.win_rate || 0) >= 50 ? 'text-emerald-400' : 'text-amber-400',
-      iconBg: (agentData?.win_rate || 0) >= 50 ? 'bg-emerald-500/10' : 'bg-amber-500/10',
-      borderColor: (agentData?.win_rate || 0) >= 50 ? 'border-emerald-500/20' : 'border-amber-500/20',
+      accent: winRate >= 50 ? 'success' : winRate >= 33 ? 'warning' : 'danger',
     },
     {
-      title: 'Posiciones Abiertas',
-      tooltip: 'Operaciones activas ahora mismo. Cada una tiene un objetivo de ganancia (TP) y un limite de perdida (SL).',
+      title: 'Posiciones abiertas',
+      tooltip: 'Operaciones activas ahora mismo. Cada una tiene objetivo (TP) y límite de pérdida (SL).',
       value: agentData?.positions_open || 0,
       subtitle: `Total: ${agentData?.trades_executed_total || 0} operaciones`,
       icon: BoltIcon,
-      color: 'text-violet-400',
-      iconBg: 'bg-violet-500/10',
-      borderColor: 'border-violet-500/20',
+      accent: 'accent',
     },
     {
-      title: 'Neto 7 Dias',
-      tooltip: 'Ganancias menos costos (fees de trading + IA) de la ultima semana.',
-      value: `$${agentData?.net_7d?.toFixed(2) || '0.00'}`,
-      subtitle: `14 dias: $${agentData?.net_14d?.toFixed(2) || '0.00'}`,
+      title: 'Neto 7 días',
+      tooltip: 'Ganancias menos costos de la última semana.',
+      value: `${(agentData?.net_7d || 0) >= 0 ? '+' : ''}$${agentData?.net_7d?.toFixed(2) || '0.00'}`,
+      subtitle: `14 días: $${agentData?.net_14d?.toFixed(2) || '0.00'}`,
       icon: SignalIcon,
-      color: (agentData?.net_7d || 0) >= 0 ? 'text-emerald-400' : 'text-red-400',
-      iconBg: (agentData?.net_7d || 0) >= 0 ? 'bg-emerald-500/10' : 'bg-red-500/10',
-      borderColor: (agentData?.net_7d || 0) >= 0 ? 'border-emerald-500/20' : 'border-red-500/20',
+      accent: (agentData?.net_7d || 0) >= 0 ? 'success' : 'danger',
     },
     {
-      title: 'Uso de IA',
-      tooltip: 'Cuantas consultas al modelo de IA se han usado hoy. Limite: 95 consultas por dia.',
+      title: 'Uso de IA hoy',
+      tooltip: 'Consultas al modelo de IA hoy. Límite: 95/día, 5/minuto.',
       value: `${agentData?.llm_usage?.rpd || 0}/${agentData?.llm_usage?.rpd_limit || 95}`,
       subtitle: `Por minuto: ${agentData?.llm_usage?.rpm || 0}/${agentData?.llm_usage?.rpm_limit || 5}`,
       icon: ClockIcon,
-      color: 'text-cyan-400',
-      iconBg: 'bg-cyan-500/10',
-      borderColor: 'border-cyan-500/20',
+      accent: 'primary',
     },
   ];
 
-  // Vertical: stack compacto densificado (para sidebar del dashboard split-view)
-  if (orientation === 'vertical') {
-    return (
-      <div className="flex flex-col gap-2">
-        {stats.map((stat, i) => (
+  const accentMap = {
+    primary: { bg: 'bg-fm-primary-soft', text: 'text-fm-primary' },
+    success: { bg: 'bg-fm-success-soft', text: 'text-fm-success' },
+    danger: { bg: 'bg-fm-danger-soft', text: 'text-fm-danger' },
+    warning: { bg: 'bg-fm-warning-soft', text: 'text-fm-warning' },
+    accent: { bg: 'bg-fm-primary-soft', text: 'text-fm-accent' },
+  };
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      {stats.map((stat, i) => {
+        const a = accentMap[stat.accent] || accentMap.primary;
+        return (
           <motion.div
             key={stat.title}
-            initial={{ opacity: 0, x: 10 }}
-            animate={{ opacity: 1, x: 0 }}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3, delay: i * 0.04 }}
+            className="bg-fm-surface border border-fm-border rounded-xl p-5 shadow-fm-sm hover:shadow-fm-md transition-shadow"
           >
-            <div className="flex items-center gap-2 p-2.5 rounded-md bg-tv-panel border border-tv-border hover:border-tv-blue/40 transition-colors">
-              <div className={`${stat.iconBg} rounded-md p-1.5 flex-shrink-0`}>
-                <stat.icon className={`w-3.5 h-3.5 ${stat.color}`} />
-              </div>
+            <div className="flex items-start justify-between">
               <div className="flex-1 min-w-0">
-                <div className="text-[10px] text-tv-text-dim uppercase tracking-wider leading-none flex items-center">
+                <div className="text-sm font-medium text-fm-text-2 inline-flex items-center">
                   {stat.title}
                   <InfoTooltip text={stat.tooltip} />
                 </div>
-                <div className={`text-sm font-bold font-mono tabular-nums mt-0.5 truncate ${stat.color}`}>
+                <div className={`text-2xl font-semibold mt-1 font-mono tabular-nums ${a.text}`}>
                   {stat.value}
                 </div>
-                <div className="text-[10px] text-tv-text-dim/70 font-mono truncate">{stat.subtitle}</div>
+                <div className="text-xs text-fm-text-dim mt-1">{stat.subtitle}</div>
+              </div>
+              <div className={`${a.bg} rounded-lg p-2.5 flex-shrink-0`}>
+                <stat.icon className={`w-5 h-5 ${a.text}`} />
               </div>
             </div>
           </motion.div>
-        ))}
-      </div>
-    );
-  }
-
-  // Grid: layout original (backward compat)
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-      {stats.map((stat, i) => (
-        <motion.div
-          key={stat.title}
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, delay: i * 0.07 }}
-        >
-          <div className={`relative rounded-xl border ${stat.borderColor} bg-gray-900/60 backdrop-blur-xl p-5 transition-all duration-300 hover:bg-gray-800/60 hover:shadow-lg hover:shadow-blue-500/5`}>
-            <div className="flex items-start justify-between">
-              <div className="flex-1">
-                <p className="text-xs font-medium text-gray-400 uppercase tracking-wider inline-flex items-center">
-                  {stat.title}
-                  <InfoTooltip text={stat.tooltip} />
-                </p>
-                <p className={`text-2xl font-bold mt-1 font-mono tabular-nums ${stat.color}`}>
-                  {stat.value}
-                </p>
-                <p className="text-xs text-gray-500 mt-1">{stat.subtitle}</p>
-              </div>
-              <div className={`${stat.iconBg} rounded-lg p-2.5`}>
-                <stat.icon className={`w-5 h-5 ${stat.color}`} />
-              </div>
-            </div>
-          </div>
-        </motion.div>
-      ))}
+        );
+      })}
     </div>
   );
 }

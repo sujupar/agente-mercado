@@ -53,18 +53,19 @@ export function DateFilter({ fromDate, toDate, onChange, size = 'md' }) {
     ? 'px-2 py-1 text-[11px]'
     : 'px-3 py-1.5 text-xs';
 
+  const pillActive = 'bg-fm-primary-soft text-fm-primary ring-1 ring-fm-primary/20';
+  const pillInactive = 'text-fm-text-2 hover:text-fm-text hover:bg-fm-surface-2';
+
   return (
-    <div className="flex items-center gap-1.5 flex-wrap">
+    <div className="inline-flex items-center gap-1 bg-fm-surface border border-fm-border rounded-lg p-1 flex-wrap">
       {PRESETS.map((preset) => {
         const active = isPresetActive(preset, fromDate, toDate);
         return (
           <button
             key={preset.key}
             onClick={() => handlePreset(preset)}
-            className={`${btnClasses} rounded-md font-medium transition-colors ${
-              active
-                ? 'bg-tv-blue/20 text-tv-blue ring-1 ring-tv-blue/40'
-                : 'text-tv-text-dim hover:text-tv-text hover:bg-tv-panel-2'
+            className={`${btnClasses} rounded-md font-medium transition-colors focus-ring ${
+              active ? pillActive : pillInactive
             }`}
           >
             {preset.label}
@@ -73,28 +74,26 @@ export function DateFilter({ fromDate, toDate, onChange, size = 'md' }) {
       })}
       <button
         onClick={() => setShowCustom(!showCustom)}
-        className={`${btnClasses} rounded-md font-medium transition-colors ${
-          showCustom
-            ? 'bg-tv-blue/20 text-tv-blue ring-1 ring-tv-blue/40'
-            : 'text-tv-text-dim hover:text-tv-text hover:bg-tv-panel-2'
+        className={`${btnClasses} rounded-md font-medium transition-colors focus-ring ${
+          showCustom ? pillActive : pillInactive
         }`}
       >
         Rango
       </button>
       {showCustom && (
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 pl-2 border-l border-fm-border">
           <input
             type="date"
             value={fromDate || ''}
             onChange={(e) => onChange(e.target.value || null, toDate)}
-            className="px-2 py-1 rounded-md bg-tv-panel border border-tv-border text-[11px] text-tv-text focus:border-tv-blue focus:outline-none"
+            className="px-2 py-1 rounded-md bg-fm-surface border border-fm-border text-[11px] text-fm-text focus:border-fm-primary focus:outline-none focus:shadow-fm-focus"
           />
-          <span className="text-tv-text-dim text-[11px]">a</span>
+          <span className="text-fm-text-dim text-[11px]">a</span>
           <input
             type="date"
             value={toDate || ''}
             onChange={(e) => onChange(fromDate, e.target.value || null)}
-            className="px-2 py-1 rounded-md bg-tv-panel border border-tv-border text-[11px] text-tv-text focus:border-tv-blue focus:outline-none"
+            className="px-2 py-1 rounded-md bg-fm-surface border border-fm-border text-[11px] text-fm-text focus:border-fm-primary focus:outline-none focus:shadow-fm-focus"
           />
         </div>
       )}

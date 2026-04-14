@@ -1,13 +1,58 @@
 @import "tailwindcss";
 
+@theme {
+  /* Fuentes */
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* Fintech Light palette (Stripe/Mercury inspired) */
+  --color-fm-bg: #fafafa;
+  --color-fm-surface: #ffffff;
+  --color-fm-surface-2: #f5f5f7;
+  --color-fm-border: #e5e5e7;
+  --color-fm-border-strong: #d2d2d7;
+  --color-fm-text: #1d1d1f;
+  --color-fm-text-2: #424245;
+  --color-fm-text-dim: #86868b;
+  --color-fm-primary: #635bff;
+  --color-fm-primary-hover: #5850ec;
+  --color-fm-primary-soft: #f0efff;
+  --color-fm-success: #00875a;
+  --color-fm-success-soft: #e4f5ed;
+  --color-fm-danger: #de1c00;
+  --color-fm-danger-soft: #fde8e5;
+  --color-fm-warning: #b85c00;
+  --color-fm-warning-soft: #fef3e4;
+  --color-fm-accent: #7a5af8;
+
+  /* TradingView legacy (mantener compat) */
+  --color-tv-bg: #0b0e11;
+  --color-tv-panel: #131722;
+  --color-tv-panel-2: #1e222d;
+  --color-tv-border: #2a2e39;
+  --color-tv-text: #d1d4dc;
+  --color-tv-text-dim: #787b86;
+  --color-tv-up: #26a69a;
+  --color-tv-down: #ef5350;
+  --color-tv-blue: #2962ff;
+  --color-tv-accent: #f0b90b;
+
+  /* Shadows */
+  --shadow-fm-sm: 0 1px 2px rgba(17, 24, 39, 0.04), 0 0 0 1px rgba(17, 24, 39, 0.05);
+  --shadow-fm-md: 0 4px 12px rgba(17, 24, 39, 0.06), 0 0 0 1px rgba(17, 24, 39, 0.04);
+  --shadow-fm-lg: 0 12px 24px rgba(17, 24, 39, 0.08), 0 0 0 1px rgba(17, 24, 39, 0.04);
+  --shadow-fm-focus: 0 0 0 4px rgba(99, 91, 255, 0.15);
+}
+
+/* Scrollbar light */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #374151 transparent;
+  scrollbar-color: #d2d2d7 transparent;
 }
 
 *::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 *::-webkit-scrollbar-track {
@@ -15,25 +60,32 @@
 }
 
 *::-webkit-scrollbar-thumb {
-  background: #374151;
-  border-radius: 3px;
+  background: #d2d2d7;
+  border-radius: 4px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: #4b5563;
+  background: #a1a1a6;
 }
 
+html,
 body {
   margin: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto',
-    sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: #030712;
-  color: #f3f4f6;
+  background: #fafafa;
+  color: #1d1d1f;
+  overflow-x: hidden;
 }
 
 ::selection {
-  background: rgba(59, 130, 246, 0.3);
-  color: #fff;
+  background: rgba(99, 91, 255, 0.18);
+  color: #1d1d1f;
+}
+
+/* Utility: focus-ring consistente fintech */
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-fm-focus);
 }

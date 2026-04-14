@@ -18,8 +18,11 @@ import { StrategiesPage } from './components/Strategies/StrategiesPage';
 import { BrokerPage } from './components/Broker/BrokerPage';
 import { Sidebar } from './components/Layout/Sidebar';
 import { Topbar } from './components/Layout/Topbar';
+import { PageHeader } from './components/Layout/PageHeader';
 import { TABS } from './components/Layout/navConfig';
-import { DashboardProvider } from './context/DashboardContext';
+import { DateFilter } from './components/DateFilter';
+import { DashboardProvider, useDashboardContext } from './context/DashboardContext';
+import { SidebarProvider } from './context/SidebarContext';
 import { useAgentData } from './hooks/useAgentData';
 import { usePnLHistory } from './hooks/usePnLHistory';
 import { useSignals } from './hooks/useSignals';
@@ -40,18 +43,15 @@ function SurvivalBanner({ status, reason }) {
   const config = {
     WARNING: {
       icon: ExclamationTriangleIcon,
-      bg: 'bg-tv-accent/10 border-tv-accent/30',
-      text: 'text-tv-accent',
+      classes: 'bg-fm-warning-soft border-fm-warning/30 text-fm-warning',
     },
     SIMULATION: {
       icon: InformationCircleIcon,
-      bg: 'bg-tv-blue/10 border-tv-blue/30',
-      text: 'text-tv-blue',
+      classes: 'bg-fm-primary-soft border-fm-primary/20 text-fm-primary',
     },
     SHUTDOWN: {
       icon: XCircleIcon,
-      bg: 'bg-tv-down/10 border-tv-down/30',
-      text: 'text-tv-down',
+      classes: 'bg-fm-danger-soft border-fm-danger/30 text-fm-danger',
     },
   };
 
@@ -59,13 +59,55 @@ function SurvivalBanner({ status, reason }) {
   const Icon = c.icon;
 
   return (
-    <div className={`border rounded-lg p-3 flex items-start gap-2 ${c.bg}`}>
-      <Icon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${c.text}`} />
+    <div className={`border rounded-lg p-3 flex items-start gap-2 ${c.classes}`}>
+      <Icon className="w-5 h-5 flex-shrink-0 mt-0.5" />
       <div className="flex-1">
-        <div className={`text-xs font-semibold ${c.text}`}>{status}</div>
-        {reason && <div className="text-xs text-tv-text-dim mt-0.5">{reason}</div>}
+        <div className="text-sm font-semibold">{status}</div>
+        {reason && <div className="text-xs mt-0.5 opacity-90">{reason}</div>}
       </div>
     </div>
+  );
+}
+
+function DashboardTab({ agentData, pnlHistory, loadingPnL, trades, loadingTrades, signals, loadingSignals, handleUpdate }) {
+  const { globalFromDate, globalToDate, setGlobalDate } = useDashboardContext();
+
+  return (
+    <>
+      <PageHeader
+        title="Dashboard"
+        description="Métricas globales y rendimiento consolidado del agente."
+        actions={
+          <DateFilter
+            fromDate={globalFromDate}
+            toDate={globalToDate}
+            onChange={setGlobalDate}
+            size="sm"
+          />
+        }
+      />
+
+      <SurvivalBanner status={agentData?.survival_status} reason={agentData?.survival_reason} />
+
+      <RegimeBanner />
+
+      <StatsCards agentData={agentData} />
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+        <div className="xl:col-span-2">
+          <PnLChart pnlHistory={pnlHistory} loading={loadingPnL} />
+        </div>
+        <div>
+          <SignalsPanel signals={signals} loading={loadingSignals} />
+        </div>
+      </div>
+
+      <CapitalBreakdown agentData={agentData} />
+
+      <TradesTable trades={trades} loading={loadingTrades} />
+
+      <SimulationControls agentMode={agentData?.mode} onUpdate={handleUpdate} />
+    </>
   );
 }
 
@@ -96,17 +138,17 @@ function DashboardContent() {
 
   if (needsAuth && agentData?.mode === 'LIVE') {
     return (
-      <div className="min-h-[100dvh] bg-tv-bg flex items-center justify-center">
-        <div className="bg-tv-panel border border-tv-border p-8 rounded-xl shadow-2xl max-w-md w-full">
-          <h2 className="text-2xl font-bold text-tv-text mb-4">Login Requerido</h2>
-          <p className="text-tv-text-dim mb-6 text-sm">
-            El agente esta en modo LIVE. Necesitas autenticarte para continuar.
+      <div className="min-h-screen bg-fm-bg flex items-center justify-center p-6">
+        <div className="bg-fm-surface border border-fm-border shadow-fm-lg p-8 rounded-2xl max-w-md w-full">
+          <h2 className="text-2xl font-semibold text-fm-text mb-3">Login requerido</h2>
+          <p className="text-fm-text-2 mb-6 text-sm">
+            El agente está en modo LIVE. Necesitas autenticarte para continuar.
           </p>
           <button
             onClick={() => alert('Login no implementado aun')}
-            className="w-full bg-tv-blue hover:bg-tv-blue/90 text-white font-semibold py-2.5 px-4 rounded-md transition-colors"
+            className="w-full bg-fm-primary hover:bg-fm-primary-hover text-white font-semibold py-2.5 px-4 rounded-lg transition-colors focus-ring"
           >
-            Iniciar Sesion
+            Iniciar sesión
           </button>
         </div>
       </div>
@@ -115,13 +157,13 @@ function DashboardContent() {
 
   if (loadingAgent) {
     return (
-      <div className="min-h-[100dvh] bg-tv-bg flex items-center justify-center">
+      <div className="min-h-screen bg-fm-bg flex items-center justify-center">
         <div className="text-center">
-          <div className="relative w-16 h-16 mx-auto mb-4">
-            <div className="absolute inset-0 rounded-full border-2 border-tv-blue/20" />
-            <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-tv-blue animate-spin" />
+          <div className="relative w-12 h-12 mx-auto mb-4">
+            <div className="absolute inset-0 rounded-full border-2 border-fm-border" />
+            <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-fm-primary animate-spin" />
           </div>
-          <p className="text-tv-text-dim text-sm">Conectando con el agente...</p>
+          <p className="text-fm-text-2 text-sm">Conectando con el agente...</p>
         </div>
       </div>
     );
@@ -129,16 +171,16 @@ function DashboardContent() {
 
   if (agentError) {
     return (
-      <div className="min-h-[100dvh] bg-tv-bg flex items-center justify-center">
-        <div className="bg-tv-down/10 border border-tv-down/30 rounded-xl p-8 max-w-md text-center">
-          <XCircleIcon className="w-12 h-12 text-tv-down mx-auto mb-3" />
-          <h3 className="text-tv-down font-semibold text-lg mb-2">Error de Conexion</h3>
-          <p className="text-tv-text-dim text-sm mb-4">
-            No se pudo conectar con el backend
+      <div className="min-h-screen bg-fm-bg flex items-center justify-center p-6">
+        <div className="bg-fm-surface border border-fm-danger/30 shadow-fm-lg rounded-2xl p-8 max-w-md text-center">
+          <XCircleIcon className="w-12 h-12 text-fm-danger mx-auto mb-3" />
+          <h3 className="text-fm-text font-semibold text-lg mb-2">Error de conexión</h3>
+          <p className="text-fm-text-2 text-sm mb-5">
+            No se pudo conectar con el backend.
           </p>
           <button
             onClick={() => window.location.reload()}
-            className="bg-tv-down/20 hover:bg-tv-down/30 text-tv-down text-sm font-semibold py-2 px-6 rounded-md border border-tv-down/30 transition-colors"
+            className="bg-fm-danger hover:bg-fm-danger/90 text-white text-sm font-semibold py-2.5 px-6 rounded-lg transition-colors focus-ring"
           >
             Reintentar
           </button>
@@ -156,10 +198,8 @@ function DashboardContent() {
     : 'Nunca';
 
   return (
-    <div className="min-h-[100dvh] bg-tv-bg text-tv-text pb-20 md:pb-0">
-      {/* Layout principal: sidebar (desktop) + main area */}
-      <div className="flex min-h-[100dvh]">
-        {/* Sidebar desktop */}
+    <div className="min-h-screen bg-fm-bg text-fm-text pb-20 md:pb-0">
+      <div className="flex min-h-screen">
         <Sidebar
           activeTab={activeTab}
           onTabChange={setActiveTab}
@@ -167,44 +207,21 @@ function DashboardContent() {
           mode={agentData?.mode}
         />
 
-        {/* Main area con topbar sticky */}
         <div className="flex-1 flex flex-col min-w-0">
-          <Topbar agentData={agentData} mode={agentData?.mode} />
+          <Topbar agentData={agentData} mode={agentData?.mode} activeTab={activeTab} />
 
-          {/* Regime Banner (slim) */}
-          <RegimeBanner />
-
-          {/* Contenido principal */}
-          <main className="flex-1 px-3 md:px-4 py-3 md:py-4 space-y-3 md:space-y-4 max-w-[1600px] w-full mx-auto">
+          <main className="flex-1 px-5 md:px-8 py-6 md:py-8 space-y-5 max-w-[1400px] w-full mx-auto">
             {activeTab === 'dashboard' && (
-              <>
-                <SurvivalBanner
-                  status={agentData?.survival_status}
-                  reason={agentData?.survival_reason}
-                />
-                {/* Split-view: Stats + Chart, Capital + Signals, Trades full */}
-                <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 md:gap-4">
-                  <div className="xl:col-span-2">
-                    <PnLChart pnlHistory={pnlHistory} loading={loadingPnL} />
-                  </div>
-                  <div>
-                    <StatsCards agentData={agentData} orientation="vertical" />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 md:gap-4">
-                  <div className="xl:col-span-2">
-                    <CapitalBreakdown agentData={agentData} />
-                  </div>
-                  <div>
-                    <SignalsPanel signals={signals} loading={loadingSignals} />
-                  </div>
-                </div>
-
-                <TradesTable trades={trades} loading={loadingTrades} />
-
-                <SimulationControls agentMode={agentData?.mode} onUpdate={handleUpdate} />
-              </>
+              <DashboardTab
+                agentData={agentData}
+                pnlHistory={pnlHistory}
+                loadingPnL={loadingPnL}
+                trades={trades}
+                loadingTrades={loadingTrades}
+                signals={signals}
+                loadingSignals={loadingSignals}
+                handleUpdate={handleUpdate}
+              />
             )}
             {activeTab === 'strategies' && <StrategiesPage />}
             {activeTab === 'broker' && <BrokerPage />}
@@ -214,14 +231,14 @@ function DashboardContent() {
       </div>
 
       {/* Mobile Bottom Navigation */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-tv-bg/95 backdrop-blur-xl border-t border-tv-border pb-[env(safe-area-inset-bottom)]">
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-fm-surface/95 backdrop-blur-xl border-t border-fm-border pb-[env(safe-area-inset-bottom)]">
         <div className="flex justify-around items-center h-16">
           {TABS.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               onClick={() => setActiveTab(id)}
               className={`flex flex-col items-center justify-center flex-1 h-full transition-colors ${
-                activeTab === id ? 'text-tv-blue' : 'text-tv-text-dim'
+                activeTab === id ? 'text-fm-primary' : 'text-fm-text-dim'
               }`}
             >
               <Icon className="w-5 h-5" />
@@ -238,7 +255,9 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <DashboardProvider>
-        <DashboardContent />
+        <SidebarProvider>
+          <DashboardContent />
+        </SidebarProvider>
       </DashboardProvider>
     </QueryClientProvider>
   );

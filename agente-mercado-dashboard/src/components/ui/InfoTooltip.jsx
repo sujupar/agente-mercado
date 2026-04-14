@@ -65,7 +65,7 @@ export function InfoTooltip({ text }) {
       >
         <InformationCircleIcon
           className={`w-4 h-4 cursor-pointer transition-colors ${
-            show ? 'text-blue-400' : 'text-gray-500 hover:text-gray-300'
+            show ? 'text-fm-primary' : 'text-fm-text-dim hover:text-fm-text'
           }`}
         />
       </button>
@@ -82,14 +82,14 @@ export function InfoTooltip({ text }) {
             width: 320,
           }}
         >
-          <div className="bg-gray-800 border border-gray-600/50 rounded-xl shadow-2xl p-4 relative">
+          <div className="bg-fm-surface border border-fm-border rounded-xl shadow-fm-lg p-4 relative">
             <button
               onClick={() => setShow(false)}
-              className="absolute top-2 right-2 text-gray-500 hover:text-gray-300"
+              className="absolute top-2 right-2 text-fm-text-dim hover:text-fm-text"
             >
               <XMarkIcon className="w-4 h-4" />
             </button>
-            <p className="text-sm text-gray-200 leading-relaxed pr-5">
+            <p className="text-sm text-fm-text-2 leading-relaxed pr-5">
               {text}
             </p>
           </div>

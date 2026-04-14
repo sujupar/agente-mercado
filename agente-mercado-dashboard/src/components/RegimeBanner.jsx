@@ -1,40 +1,37 @@
 /**
- * RegimeBanner — Variante slim 1 línea (estilo TradingView).
- *
- * Muestra el régimen macro clasificado por el LLM de forma densa,
- * debajo del topbar, encima del main content.
+ * RegimeBanner — variante slim clara (fintech light).
  */
 
 import { useRegime } from '../hooks/useRegime';
 
 const REGIME_STYLES = {
   RISK_ON: {
-    bg: 'bg-tv-up/8',
-    border: 'border-tv-up/25',
-    dot: 'bg-tv-up',
-    text: 'text-tv-up',
-    label: 'RISK ON',
+    bg: 'bg-fm-success-soft',
+    border: 'border-fm-success/20',
+    dot: 'bg-fm-success',
+    text: 'text-fm-success',
+    label: 'Mercado favorable',
   },
   RISK_OFF: {
-    bg: 'bg-tv-down/8',
-    border: 'border-tv-down/25',
-    dot: 'bg-tv-down',
-    text: 'text-tv-down',
-    label: 'RISK OFF',
+    bg: 'bg-fm-danger-soft',
+    border: 'border-fm-danger/20',
+    dot: 'bg-fm-danger',
+    text: 'text-fm-danger',
+    label: 'Mercado defensivo',
   },
   TRANSITION: {
-    bg: 'bg-tv-accent/8',
-    border: 'border-tv-accent/25',
-    dot: 'bg-tv-accent',
-    text: 'text-tv-accent',
-    label: 'TRANSITION',
+    bg: 'bg-fm-warning-soft',
+    border: 'border-fm-warning/20',
+    dot: 'bg-fm-warning',
+    text: 'text-fm-warning',
+    label: 'Mercado en transición',
   },
   UNCLEAR: {
-    bg: 'bg-tv-panel-2',
-    border: 'border-tv-border',
-    dot: 'bg-tv-text-dim',
-    text: 'text-tv-text-dim',
-    label: 'UNCLEAR',
+    bg: 'bg-fm-surface-2',
+    border: 'border-fm-border',
+    dot: 'bg-fm-text-dim',
+    text: 'text-fm-text-2',
+    label: 'Sin señal clara',
   },
 };
 
@@ -65,32 +62,30 @@ export function RegimeBanner() {
   );
 
   return (
-    <div className={`${style.bg} border-b ${style.border}`}>
-      <div className="px-3 md:px-4 h-7 flex items-center gap-3 text-[11px] max-w-[1600px] w-full mx-auto">
-        <div className="flex items-center gap-1.5">
-          <span className={`w-1.5 h-1.5 rounded-full ${style.dot} animate-pulse`} />
-          <span className={`font-bold tracking-wider ${style.text}`}>{style.label}</span>
-        </div>
-        <span className="text-tv-text-dim">
-          Conf <span className={`font-semibold ${style.text}`}>{confidencePct}%</span>
-        </span>
-        <span className="text-tv-text-dim">
-          Risk <span className={`font-semibold ${style.text}`}>{multiplier}x</span>
-        </span>
-        {activeStrats.length > 0 && (
-          <span className="text-tv-text-dim hidden sm:inline">
-            Activas <span className="font-semibold text-tv-text">{activeStrats.join(', ')}</span>
-          </span>
-        )}
-        {regime.reasoning && (
-          <span
-            className="text-tv-text-dim italic truncate hidden md:inline ml-auto max-w-xl"
-            title={regime.reasoning}
-          >
-            {regime.reasoning}
-          </span>
-        )}
+    <div className={`rounded-lg border ${style.bg} ${style.border} px-4 py-2.5 flex items-center flex-wrap gap-x-4 gap-y-1 text-xs`}>
+      <div className="flex items-center gap-2">
+        <span className={`w-1.5 h-1.5 rounded-full ${style.dot} animate-pulse`} />
+        <span className={`font-semibold ${style.text}`}>{style.label}</span>
       </div>
+      <span className="text-fm-text-2">
+        Confianza <span className={`font-semibold ${style.text}`}>{confidencePct}%</span>
+      </span>
+      <span className="text-fm-text-2">
+        Riesgo <span className={`font-semibold ${style.text}`}>{multiplier}×</span>
+      </span>
+      {activeStrats.length > 0 && (
+        <span className="text-fm-text-2 hidden sm:inline">
+          Activas <span className="font-semibold text-fm-text">{activeStrats.join(', ')}</span>
+        </span>
+      )}
+      {regime.reasoning && (
+        <span
+          className="text-fm-text-dim italic truncate hidden lg:inline ml-auto max-w-xl"
+          title={regime.reasoning}
+        >
+          {regime.reasoning}
+        </span>
+      )}
     </div>
   );
 }

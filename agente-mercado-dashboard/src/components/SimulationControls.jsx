@@ -24,7 +24,6 @@ export function SimulationControls({ agentMode, onUpdate }) {
       showMessage('La cantidad debe ser mayor a 0', 'warning');
       return;
     }
-
     setLoading(true);
     try {
       const response = await api.addCapital(amount);
@@ -40,13 +39,10 @@ export function SimulationControls({ agentMode, onUpdate }) {
   const handleForceCycle = async () => {
     setLoading(true);
     showMessage('Ejecutando ciclo... esto puede tomar 2-3 minutos', 'info');
-
     try {
       await api.forceCycle();
-      showMessage('Ciclo completado. Datos actualizandose...', 'success');
-      setTimeout(() => {
-        if (onUpdate) onUpdate();
-      }, 3000);
+      showMessage('Ciclo completado. Datos actualizándose...', 'success');
+      setTimeout(() => { if (onUpdate) onUpdate(); }, 3000);
     } catch (error) {
       showMessage(`Error: ${error.response?.data?.detail || error.message}`, 'error');
     } finally {
@@ -54,39 +50,43 @@ export function SimulationControls({ agentMode, onUpdate }) {
     }
   };
 
+  const msgClass =
+    messageType === 'success' ? 'bg-fm-success-soft border-fm-success/20 text-fm-success'
+    : messageType === 'error' ? 'bg-fm-danger-soft border-fm-danger/20 text-fm-danger'
+    : messageType === 'warning' ? 'bg-fm-warning-soft border-fm-warning/20 text-fm-warning'
+    : 'bg-fm-primary-soft border-fm-primary/20 text-fm-primary';
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, delay: 0.1 }}
-      className="rounded-xl border border-blue-500/20 bg-blue-950/20 backdrop-blur-xl p-5"
+      transition={{ duration: 0.3 }}
+      className="rounded-xl border border-fm-border bg-fm-surface shadow-fm-sm p-6"
     >
-      <div className="flex items-center space-x-2 mb-4">
-        <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
-        <h3 className="text-sm font-semibold text-blue-300 uppercase tracking-wider">
-          Controles de Simulacion
-        </h3>
+      <div className="flex items-center gap-2 mb-4">
+        <div className="w-2 h-2 bg-fm-primary rounded-full animate-pulse" />
+        <h3 className="text-sm font-semibold text-fm-text">Controles de simulación</h3>
+        <span className="text-xs text-fm-text-dim">Solo en modo SIMULATION</span>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Recargar Saldo */}
-        <div className="bg-gray-900/40 rounded-lg p-4 border border-gray-700/30">
-          <label className="block text-xs text-gray-400 mb-2 font-medium">
-            Recargar Saldo (USD)
+        <div className="bg-fm-surface-2 rounded-lg p-4">
+          <label className="block text-xs text-fm-text-2 mb-2 font-medium">
+            Recargar saldo (USD)
           </label>
-          <div className="flex space-x-2">
+          <div className="flex gap-2">
             <input
               type="number"
               value={amount}
               onChange={(e) => setAmount(Number(e.target.value))}
               min="1"
-              className="flex-1 bg-gray-800/60 border border-gray-600/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/30 transition-colors"
+              className="flex-1 bg-fm-surface border border-fm-border rounded-lg px-3 py-2 text-fm-text text-sm focus:outline-none focus:border-fm-primary focus:shadow-fm-focus transition-all"
               disabled={loading}
             />
             <button
               onClick={handleAddCapital}
               disabled={loading}
-              className="inline-flex items-center bg-blue-600/80 hover:bg-blue-600 disabled:bg-gray-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-all duration-200 hover:shadow-lg hover:shadow-blue-500/20"
+              className="inline-flex items-center bg-fm-primary hover:bg-fm-primary-hover disabled:opacity-50 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors focus-ring"
             >
               <PlusCircleIcon className="w-4 h-4 mr-1.5" />
               {loading ? '...' : 'Recargar'}
@@ -94,41 +94,31 @@ export function SimulationControls({ agentMode, onUpdate }) {
           </div>
         </div>
 
-        {/* Forzar Ciclo */}
-        <div className="bg-gray-900/40 rounded-lg p-4 border border-gray-700/30">
-          <label className="block text-xs text-gray-400 mb-2 font-medium">
-            Ejecutar Ciclo Manual
+        <div className="bg-fm-surface-2 rounded-lg p-4">
+          <label className="block text-xs text-fm-text-2 mb-2 font-medium">
+            Ejecutar ciclo manual
           </label>
           <button
             onClick={handleForceCycle}
             disabled={loading}
-            className="w-full inline-flex items-center justify-center bg-indigo-600/80 hover:bg-indigo-600 disabled:bg-gray-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-all duration-200 hover:shadow-lg hover:shadow-indigo-500/20"
+            className="w-full inline-flex items-center justify-center bg-fm-accent hover:bg-fm-primary disabled:opacity-50 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors focus-ring"
           >
             <ArrowPathIcon className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
-            {loading ? 'Ejecutando...' : 'Forzar Ciclo Ahora'}
+            {loading ? 'Ejecutando...' : 'Forzar ciclo ahora'}
           </button>
-          <p className="text-xs text-gray-500 mt-2">
-            Ejecuta un ciclo de trading sin esperar 10 min
+          <p className="text-xs text-fm-text-dim mt-2">
+            Ejecuta un ciclo de trading sin esperar el intervalo
           </p>
         </div>
       </div>
 
-      {/* Mensaje de feedback */}
       <AnimatePresence>
         {message && (
           <motion.div
-            initial={{ opacity: 0, y: -10, height: 0 }}
-            animate={{ opacity: 1, y: 0, height: 'auto' }}
-            exit={{ opacity: 0, y: -10, height: 0 }}
-            className={`mt-4 p-3 rounded-lg border text-sm ${
-              messageType === 'success'
-                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                : messageType === 'error'
-                ? 'bg-red-500/10 border-red-500/30 text-red-300'
-                : messageType === 'warning'
-                ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-                : 'bg-blue-500/10 border-blue-500/30 text-blue-300'
-            }`}
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className={`mt-4 p-3 rounded-lg border text-sm ${msgClass}`}
           >
             {message}
           </motion.div>
