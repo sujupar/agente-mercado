@@ -1385,7 +1385,8 @@ async def force_broker_sync(
                 else "s2_pullback_20_down"
             )
             direction_db = "BUY" if p.direction == "LONG" else "SELL"
-            size_usd = abs(p.units) * p.entry_price
+            from app.forex.instruments import calculate_notional_usd
+            size_usd = calculate_notional_usd(p.instrument, p.units, p.entry_price)
 
             new_trade = Trade(
                 strategy_id=strategy_id,

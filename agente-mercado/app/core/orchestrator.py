@@ -22,7 +22,7 @@ from app.broker.models import Candle
 from app.config import settings
 from app.db.database import async_session_factory
 from app.db.models import AgentState, Bitacora, Signal, Trade
-from app.forex.instruments import calculate_position_size, get_stepped_risk_base, is_spread_acceptable
+from app.forex.instruments import calculate_notional_usd, calculate_position_size, get_stepped_risk_base, is_spread_acceptable
 from app.forex.sessions import get_current_session, is_forex_market_open
 from app.learning.bitacora_engine import BitacoraEngine
 from app.learning.improvement_engine import ImprovementEngine
@@ -774,13 +774,21 @@ class ForexOrchestrator:
             symbol=signal.instrument,
             instrument=signal.instrument,
             direction="BUY" if signal.direction == "LONG" else "SELL",
-            size_usd=abs(units) * (order_result.fill_price or signal.entry_price),
+            size_usd=calculate_notional_usd(
+                signal.instrument,
+                units,
+                order_result.fill_price or signal.entry_price,
+            ),
             quantity=abs(units),
             entry_price=order_result.fill_price or signal.entry_price,
             take_profit_price=signal.tp1_price,
             stop_loss_price=signal.stop_price,
             initial_stop_price=signal.stop_price,
-            original_size_usd=abs(units) * (order_result.fill_price or signal.entry_price),
+            original_size_usd=calculate_notional_usd(
+                signal.instrument,
+                units,
+                order_result.fill_price or signal.entry_price,
+            ),
             pattern_name=signal.pattern_type,
             broker_trade_id=order_result.trade_id,
             risk_amount_usd=risk_amount,
@@ -1194,7 +1202,9 @@ class ForexOrchestrator:
             "s1_pullback_20_up" if position.direction == "LONG"
             else "s2_pullback_20_down"
         )
-        size_usd = abs(position.units) * position.entry_price
+        size_usd = calculate_notional_usd(
+            position.instrument, position.units, position.entry_price,
+        )
 
         trade = Trade(
             strategy_id=strategy_id,

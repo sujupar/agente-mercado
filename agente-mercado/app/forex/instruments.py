@@ -176,6 +176,39 @@ def calculate_position_size(
     return units
 
 
+def calculate_notional_usd(instrument: str, units: float, price: float) -> float:
+    """Calcula el valor notional en USD de una posición.
+
+    Fórmulas por tipo de par:
+    - XXX/USD (EUR_USD, GBP_USD, XAU_USD, BTC_USD): notional = units × price
+      Porque las "units" están en la base (EUR, GBP, oz, BTC) y el precio es USD por unidad.
+    - USD/XXX (USD_JPY): notional = units / price
+      Porque las "units" están en la cotización (JPY) y hay que convertir a USD.
+      Ejemplo: 100 yenes a 158.78 JPY/USD = 100/158.78 = $0.63
+
+    IMPORTANTE: antes se usaba units*price para todos los pares, lo que inflaba
+    el size_usd de USD_JPY ~25000x (344K JPY * 159 = $55M en vez de $2K).
+
+    Args:
+        instrument: Par de trading normalizado (ej. "EUR_USD", "USD_JPY")
+        units: Cantidad de unidades de la moneda base
+        price: Precio actual del par
+
+    Returns:
+        Notional en USD.
+    """
+    key = _normalize_instrument(instrument)
+    if price <= 0 or units == 0:
+        return 0.0
+
+    # Pares USD/XXX: units están en la moneda cotizada, dividir para USD
+    if key.startswith("USD_"):
+        return abs(units) / price
+
+    # Pares XXX/USD (default): units en moneda base, multiplicar por price
+    return abs(units) * price
+
+
 def is_spread_acceptable(instrument: str, current_spread: float) -> bool:
     """Verifica si el spread actual es aceptable para operar."""
     key = _normalize_instrument(instrument)
