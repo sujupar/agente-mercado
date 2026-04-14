@@ -401,3 +401,23 @@ class RegimeHistory(Base):
 
     # Datos de input (para debugging/auditing)
     input_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class SystemConfig(Base):
+    """Configuración global del sistema, key-value mutable en runtime.
+
+    Usado para el switch DEMO/LIVE del broker sin requerir restart.
+    Keys actuales:
+    - broker.environment: "DEMO" | "LIVE"
+    """
+
+    __tablename__ = "system_config"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(256))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+    updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)

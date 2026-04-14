@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -14,10 +15,40 @@ log = logging.getLogger(__name__)
 _scheduler: AsyncIOScheduler | None = None
 _orchestrator = None
 _broker = None
+_current_environment: str | None = None  # Cache del env actual (DEMO/LIVE)
+
+
+async def get_current_environment() -> str:
+    """Retorna el environment activo del broker (leído desde SystemConfig).
+
+    Fallback: settings.capital_environment (env var).
+    Cachea el resultado en _current_environment para performance.
+    """
+    global _current_environment
+    if _current_environment is not None:
+        return _current_environment
+
+    try:
+        from app.db.system_config import get_config
+        env = await get_config(
+            "broker.environment",
+            default=settings.capital_environment,
+        )
+        _current_environment = (env or settings.capital_environment).upper()
+    except Exception:
+        log.exception("Error leyendo broker.environment — usando .env fallback")
+        _current_environment = settings.capital_environment.upper()
+
+    return _current_environment
 
 
 def _get_broker():
-    """Crea el broker singleton según la configuración."""
+    """Crea el broker singleton según la configuración.
+
+    El environment se lee de SystemConfig si está disponible (leído
+    previamente por get_current_environment y cacheado en _current_environment).
+    Fallback a settings.capital_environment si no hay cache.
+    """
     global _broker
     if _broker is not None:
         return _broker
@@ -27,16 +58,15 @@ def _get_broker():
     if provider == "capital":
         from app.broker.capital import CapitalBroker
         if settings.capital_api_key and settings.capital_identifier:
+            # Usa el env cacheado si existe, sino el del settings
+            env = _current_environment or settings.capital_environment
             _broker = CapitalBroker(
                 api_key=settings.capital_api_key,
                 identifier=settings.capital_identifier,
                 password=settings.capital_password,
-                environment=settings.capital_environment,
+                environment=env,
             )
-            log.info(
-                "Broker Capital.com inicializado: env=%s",
-                settings.capital_environment,
-            )
+            log.info("Broker Capital.com inicializado: env=%s", env)
         else:
             log.warning(
                 "Capital.com no configurado (falta api_key o identifier) — "
@@ -50,10 +80,7 @@ def _get_broker():
                 access_token=settings.oanda_access_token,
                 environment=settings.oanda_environment,
             )
-            log.info(
-                "Broker OANDA inicializado: env=%s",
-                settings.oanda_environment,
-            )
+            log.info("Broker OANDA inicializado: env=%s", settings.oanda_environment)
         else:
             log.warning(
                 "OANDA no configurado (falta account_id o access_token) — "
@@ -63,6 +90,76 @@ def _get_broker():
         log.error("Broker provider desconocido: %s (usar 'capital' o 'oanda')", provider)
 
     return _broker
+
+
+async def reload_broker(new_environment: str) -> tuple[str, str]:
+    """Recrea el broker singleton con un nuevo environment sin restart.
+
+    Pasos:
+    1. Pausa scheduler
+    2. Cierra broker y orchestrator actuales
+    3. Actualiza _current_environment
+    4. Recrea broker + orchestrator via _ensure_orchestrator
+    5. Valida conexión
+    6. Resume scheduler
+
+    Retorna (previous_env, new_env).
+    Lanza excepción si falla la conexión con el nuevo env (caller debe rollback).
+    """
+    global _broker, _orchestrator, _current_environment, _scheduler
+
+    previous = _current_environment or settings.capital_environment
+    new_environment = new_environment.upper()
+
+    if previous == new_environment:
+        log.info("reload_broker: ya está en %s, no-op", new_environment)
+        return previous, new_environment
+
+    log.info("reload_broker: %s → %s", previous, new_environment)
+
+    # 1. Pausar scheduler para evitar jobs concurrentes durante swap
+    was_running = _scheduler is not None and _scheduler.running
+    if was_running:
+        _scheduler.pause()
+        # Dar tiempo para que jobs en vuelo terminen
+        await asyncio.sleep(1)
+
+    try:
+        # 2. Cerrar broker anterior (termina sesión CST en Capital.com)
+        if _broker is not None:
+            try:
+                await _broker.close()
+            except Exception:
+                log.exception("Error cerrando broker previo — ignorando")
+            _broker = None
+
+        # 3. Cerrar orchestrator (tiene ref al broker viejo)
+        if _orchestrator is not None:
+            try:
+                await _orchestrator.close()
+            except Exception:
+                log.exception("Error cerrando orchestrator previo — ignorando")
+            _orchestrator = None
+
+        # 4. Actualizar env cacheado
+        _current_environment = new_environment
+
+        # 5. Recrear vía _ensure_orchestrator (lazy)
+        orch = _ensure_orchestrator()
+        if orch is None:
+            raise RuntimeError(f"No se pudo recrear orchestrator para env={new_environment}")
+
+        # 6. Validar conexión autenticando contra Capital.com
+        connected = await orch._broker.is_connected()
+        if not connected:
+            raise RuntimeError(f"Broker no conecta en env={new_environment}")
+
+        log.info("reload_broker: OK en env=%s", new_environment)
+    finally:
+        if was_running and _scheduler is not None:
+            _scheduler.resume()
+
+    return previous, new_environment
 
 
 def _ensure_orchestrator():
@@ -140,6 +237,23 @@ async def _run_regime_analysis():
 
 async def start_scheduler() -> None:
     global _scheduler
+
+    # Leer environment desde SystemConfig (fallback a .env) ANTES de crear broker
+    # Esto asegura que el singleton arranca con el env correcto incluso después de
+    # un switch runtime que sobrevivió al restart.
+    try:
+        env = await get_current_environment()
+        log.info("Startup: broker.environment = %s (desde SystemConfig o .env)", env)
+
+        # Seed SystemConfig si no existe: persistir el valor actual para futuros switches
+        from app.db.system_config import get_config, set_config
+        existing = await get_config("broker.environment")
+        if existing is None:
+            await set_config("broker.environment", env, updated_by="startup_seed")
+            log.info("Seed SystemConfig[broker.environment] = %s", env)
+    except Exception:
+        log.exception("Error inicializando SystemConfig — seguiremos con .env")
+
     _scheduler = AsyncIOScheduler()
 
     # Job 1: Contexto H1/H4 — cada 15 min

@@ -111,6 +111,7 @@ def calculate_position_size(
     risk_pct: float,
     stop_distance_price: float,
     current_price: float = 0.0,
+    max_risk_multiplier: float = 1.5,
 ) -> float:
     """Calcula el tamaño de posición en unidades del instrumento.
 
@@ -126,9 +127,14 @@ def calculate_position_size(
         risk_pct: Porcentaje de riesgo (ej. 0.01 = 1%)
         stop_distance_price: Distancia del stop en precio
         current_price: Precio actual (necesario para USD/JPY)
+        max_risk_multiplier: Multiplicador máximo aceptable si el min_units
+            del broker fuerza a exceder el riesgo objetivo (default 1.5 = 50%
+            más de riesgo permitido). Para capital pequeño (ej. $100) es común
+            que el min_units viole el 1% — este cap evita que el sistema
+            abra trades con riesgo desproporcionado.
 
     Returns:
-        Tamaño de posición en unidades del instrumento
+        Tamaño de posición en unidades del instrumento, o 0 si no es viable.
     """
     if stop_distance_price <= 0 or account_balance <= 0 or risk_pct <= 0:
         return 0.0
@@ -154,7 +160,20 @@ def calculate_position_size(
     else:
         units = round(units, 3)
 
-    return max(units, min_units) if units > 0 else 0.0
+    if units <= 0:
+        return 0.0
+
+    # Sizing adaptativo para capital pequeño:
+    # Si el tamaño calculado es menor al mínimo del broker, necesitamos
+    # forzar a min_units. Verificar que el riesgo efectivo no exceda el cap.
+    if units < min_units:
+        effective_risk = (min_units * stop_pips * pip_value) / account_balance
+        if effective_risk > risk_pct * max_risk_multiplier:
+            # Riesgo efectivo sobrepasa el cap aceptable — skip trade
+            return 0.0
+        units = min_units
+
+    return units
 
 
 def is_spread_acceptable(instrument: str, current_spread: float) -> bool:

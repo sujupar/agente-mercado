@@ -257,10 +257,25 @@ class ForexOrchestrator:
                             self._entry_candle_cache["H4"] = candle_cache[tf]
                             self._entry_candle_cache_at = now
 
+                # Leer environment actual para aplicar política LIVE
+                # En LIVE: solo S1 ejecuta trades; las demás generan señales
+                # pero NO ejecutan (protección del capital real).
+                from app.core.scheduler import get_current_environment
+                current_env = await get_current_environment()
+                is_live = current_env.upper() == "LIVE"
+
                 # Buscar entradas para cada estrategia
                 total_trades = 0
                 for strategy_id, config in STRATEGIES.items():
                     if not config.enabled:
+                        continue
+
+                    # Política LIVE: solo S1 opera en cuenta real
+                    if is_live and strategy_id != "s1_pullback_20_up":
+                        log.debug(
+                            "[%s] Skip en LIVE: solo s1_pullback_20_up ejecuta en cuenta real",
+                            strategy_id,
+                        )
                         continue
 
                     # Check daily trade limit
@@ -598,10 +613,19 @@ class ForexOrchestrator:
         )
         strategy_open_count = open_count_result.scalar() or 0
 
-        if strategy_open_count >= strategy_config.max_concurrent_positions:
+        # Circuit breaker LIVE: en cuenta real S1 solo puede tener 1 posición abierta
+        # (vs 3 en demo) para proteger el capital de $100.
+        from app.core.scheduler import get_current_environment
+        current_env = await get_current_environment()
+        max_concurrent = strategy_config.max_concurrent_positions
+        if current_env.upper() == "LIVE" and strategy_id == "s1_pullback_20_up":
+            max_concurrent = 1
+
+        if strategy_open_count >= max_concurrent:
             log.info(
-                "[%s] Máximo por estrategia alcanzado (%d/%d)",
-                strategy_id, strategy_open_count, strategy_config.max_concurrent_positions,
+                "[%s] Máximo por estrategia alcanzado (%d/%d)%s",
+                strategy_id, strategy_open_count, max_concurrent,
+                " [LIVE]" if current_env.upper() == "LIVE" else "",
             )
             return False
 

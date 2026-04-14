@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -367,6 +368,24 @@ class SyncResultOut(BaseModel):
     message: str
     trades_synced: int
     discrepancies_found: int
+
+
+# ── Broker environment (DEMO/LIVE switch) ────────────────────────
+
+class BrokerEnvOut(BaseModel):
+    """Estado actual del environment del broker."""
+    environment: str  # "DEMO" | "LIVE"
+    previous: str | None = None
+    updated_at: datetime | None = None
+    connected: bool
+    open_positions: int
+    source: str = "db"  # "db" | "env"
+
+
+class SetBrokerEnvIn(BaseModel):
+    """Request para cambiar el environment del broker."""
+    environment: Literal["DEMO", "LIVE"]
+    confirm_live: bool = False
 
 
 # --- Market State Schemas ---
