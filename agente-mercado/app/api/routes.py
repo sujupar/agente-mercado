@@ -1071,6 +1071,47 @@ async def get_improvement_rules(
     ]
 
 
+@router.post("/admin/rules/{rule_id}/toggle")
+async def admin_toggle_rule(
+    rule_id: int,
+    is_active: bool,
+    session: AsyncSession = Depends(get_session),
+    _user: str = Depends(verify_token),
+):
+    """Activa/desactiva una regla de improvement engine por ID.
+
+    Escape hatch manual: las reglas son "permanentes" por diseño pero en casos
+    anómalos (ej. LLM entró en loop y creó reglas contradictorias) podemos
+    marcarlas inactivas desde aquí.
+    """
+    from app.db.models import ImprovementRule
+    from sqlalchemy import update as sql_update
+
+    result = await session.execute(
+        select(ImprovementRule).where(ImprovementRule.id == rule_id)
+    )
+    rule = result.scalar_one_or_none()
+    if rule is None:
+        raise HTTPException(status_code=404, detail=f"Regla {rule_id} no encontrada")
+
+    await session.execute(
+        sql_update(ImprovementRule)
+        .where(ImprovementRule.id == rule_id)
+        .values(is_active=is_active)
+    )
+    await session.commit()
+
+    return {
+        "rule_id": rule_id,
+        "strategy_id": rule.strategy_id,
+        "pattern_name": rule.pattern_name,
+        "cycle_number": rule.cycle_number,
+        "previous_is_active": rule.is_active,
+        "new_is_active": is_active,
+        "message": f"Regla {rule_id} ({rule.pattern_name}) ahora is_active={is_active}",
+    }
+
+
 # ── Broker ─────────────────────────────────────────────────
 
 class _SharedBroker:
