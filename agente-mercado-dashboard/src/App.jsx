@@ -1,15 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
 import {
-  SignalIcon,
   ExclamationTriangleIcon,
   XCircleIcon,
   InformationCircleIcon,
-  ChartBarIcon,
-  AcademicCapIcon,
-  BeakerIcon,
-  BanknotesIcon,
 } from '@heroicons/react/24/outline';
 
 import { SimulationControls } from './components/SimulationControls';
@@ -22,6 +16,10 @@ import { PnLChart } from './components/Dashboard/PnLChart';
 import { LearningPage } from './components/Learning/LearningPage';
 import { StrategiesPage } from './components/Strategies/StrategiesPage';
 import { BrokerPage } from './components/Broker/BrokerPage';
+import { Sidebar } from './components/Layout/Sidebar';
+import { Topbar } from './components/Layout/Topbar';
+import { TABS } from './components/Layout/navConfig';
+import { DashboardProvider } from './context/DashboardContext';
 import { useAgentData } from './hooks/useAgentData';
 import { usePnLHistory } from './hooks/usePnLHistory';
 import { useSignals } from './hooks/useSignals';
@@ -36,31 +34,24 @@ const queryClient = new QueryClient({
   },
 });
 
-const TABS = [
-  { id: 'dashboard', label: 'Dashboard', icon: ChartBarIcon },
-  { id: 'strategies', label: 'Estrategias', icon: BeakerIcon },
-  { id: 'broker', label: 'Broker', icon: BanknotesIcon },
-  { id: 'learning', label: 'Aprendizaje', icon: AcademicCapIcon },
-];
-
 function SurvivalBanner({ status, reason }) {
   if (!status || status === 'CONTINUE') return null;
 
   const config = {
     WARNING: {
       icon: ExclamationTriangleIcon,
-      bg: 'bg-amber-500/10 border-amber-500/30',
-      text: 'text-amber-300',
+      bg: 'bg-tv-accent/10 border-tv-accent/30',
+      text: 'text-tv-accent',
     },
     SIMULATION: {
       icon: InformationCircleIcon,
-      bg: 'bg-blue-500/10 border-blue-500/30',
-      text: 'text-blue-300',
+      bg: 'bg-tv-blue/10 border-tv-blue/30',
+      text: 'text-tv-blue',
     },
     SHUTDOWN: {
       icon: XCircleIcon,
-      bg: 'bg-red-500/10 border-red-500/30',
-      text: 'text-red-300',
+      bg: 'bg-tv-down/10 border-tv-down/30',
+      text: 'text-tv-down',
     },
   };
 
@@ -68,19 +59,13 @@ function SurvivalBanner({ status, reason }) {
   const Icon = c.icon;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: -10 }}
-      animate={{ opacity: 1, y: 0 }}
-      className={`rounded-xl border ${c.bg} p-4`}
-    >
-      <div className="flex items-center space-x-3">
-        <Icon className={`w-5 h-5 ${c.text} flex-shrink-0`} />
-        <div>
-          <p className={`text-sm font-semibold ${c.text}`}>{status}</p>
-          <p className="text-xs text-gray-400 mt-0.5">{reason}</p>
-        </div>
+    <div className={`border rounded-lg p-3 flex items-start gap-2 ${c.bg}`}>
+      <Icon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${c.text}`} />
+      <div className="flex-1">
+        <div className={`text-xs font-semibold ${c.text}`}>{status}</div>
+        {reason && <div className="text-xs text-tv-text-dim mt-0.5">{reason}</div>}
       </div>
-    </motion.div>
+    </div>
   );
 }
 
@@ -105,22 +90,21 @@ function DashboardContent() {
         setNeedsAuth(true);
       }
     };
-
     window.addEventListener('auth-error', handleAuthError);
     return () => window.removeEventListener('auth-error', handleAuthError);
   }, [agentData?.mode]);
 
   if (needsAuth && agentData?.mode === 'LIVE') {
     return (
-      <div className="min-h-[100dvh] bg-gray-950 flex items-center justify-center">
-        <div className="bg-gray-900/80 backdrop-blur-xl border border-gray-700/50 p-8 rounded-2xl shadow-2xl max-w-md w-full">
-          <h2 className="text-2xl font-bold text-white mb-4">Login Requerido</h2>
-          <p className="text-gray-400 mb-6 text-sm">
+      <div className="min-h-[100dvh] bg-tv-bg flex items-center justify-center">
+        <div className="bg-tv-panel border border-tv-border p-8 rounded-xl shadow-2xl max-w-md w-full">
+          <h2 className="text-2xl font-bold text-tv-text mb-4">Login Requerido</h2>
+          <p className="text-tv-text-dim mb-6 text-sm">
             El agente esta en modo LIVE. Necesitas autenticarte para continuar.
           </p>
           <button
             onClick={() => alert('Login no implementado aun')}
-            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 px-4 rounded-xl transition-colors"
+            className="w-full bg-tv-blue hover:bg-tv-blue/90 text-white font-semibold py-2.5 px-4 rounded-md transition-colors"
           >
             Iniciar Sesion
           </button>
@@ -131,13 +115,13 @@ function DashboardContent() {
 
   if (loadingAgent) {
     return (
-      <div className="min-h-[100dvh] bg-gray-950 flex items-center justify-center">
+      <div className="min-h-[100dvh] bg-tv-bg flex items-center justify-center">
         <div className="text-center">
           <div className="relative w-16 h-16 mx-auto mb-4">
-            <div className="absolute inset-0 rounded-full border-2 border-blue-500/20" />
-            <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-blue-500 animate-spin" />
+            <div className="absolute inset-0 rounded-full border-2 border-tv-blue/20" />
+            <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-tv-blue animate-spin" />
           </div>
-          <p className="text-gray-400 text-sm">Conectando con el agente...</p>
+          <p className="text-tv-text-dim text-sm">Conectando con el agente...</p>
         </div>
       </div>
     );
@@ -145,16 +129,16 @@ function DashboardContent() {
 
   if (agentError) {
     return (
-      <div className="min-h-[100dvh] bg-gray-950 flex items-center justify-center">
-        <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-8 max-w-md text-center">
-          <XCircleIcon className="w-12 h-12 text-red-400 mx-auto mb-3" />
-          <h3 className="text-red-300 font-semibold text-lg mb-2">Error de Conexion</h3>
-          <p className="text-gray-400 text-sm mb-4">
-            No se pudo conectar con el backend en localhost:8000
+      <div className="min-h-[100dvh] bg-tv-bg flex items-center justify-center">
+        <div className="bg-tv-down/10 border border-tv-down/30 rounded-xl p-8 max-w-md text-center">
+          <XCircleIcon className="w-12 h-12 text-tv-down mx-auto mb-3" />
+          <h3 className="text-tv-down font-semibold text-lg mb-2">Error de Conexion</h3>
+          <p className="text-tv-text-dim text-sm mb-4">
+            No se pudo conectar con el backend
           </p>
           <button
             onClick={() => window.location.reload()}
-            className="bg-red-500/20 hover:bg-red-500/30 text-red-300 text-sm font-semibold py-2 px-6 rounded-xl border border-red-500/30 transition-colors"
+            className="bg-tv-down/20 hover:bg-tv-down/30 text-tv-down text-sm font-semibold py-2 px-6 rounded-md border border-tv-down/30 transition-colors"
           >
             Reintentar
           </button>
@@ -172,135 +156,75 @@ function DashboardContent() {
     : 'Nunca';
 
   return (
-    <div className="min-h-[100dvh] bg-gray-950 text-gray-100 pb-20 md:pb-0">
-      {/* Ambient gradient orbs */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-96 h-96 bg-blue-600/8 rounded-full blur-[120px]" />
-        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-indigo-600/8 rounded-full blur-[120px]" />
-        <div className="absolute top-1/3 left-1/2 w-80 h-80 bg-violet-600/5 rounded-full blur-[100px]" />
-      </div>
+    <div className="min-h-[100dvh] bg-tv-bg text-tv-text pb-20 md:pb-0">
+      {/* Layout principal: sidebar (desktop) + main area */}
+      <div className="flex min-h-[100dvh]">
+        {/* Sidebar desktop */}
+        <Sidebar
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          lastCycle={lastCycle}
+          mode={agentData?.mode}
+        />
 
-      {/* Header */}
-      <header className="sticky top-0 z-50 bg-gray-950/80 backdrop-blur-xl border-b border-gray-800/50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-14 md:h-16">
-            <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 md:w-9 md:h-9 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20">
-                <SignalIcon className="w-4 h-4 md:w-5 md:h-5 text-white" />
-              </div>
-              <div>
-                <h1 className="text-sm md:text-base font-bold text-white leading-tight">Agente de Trading</h1>
-                <p className="text-[10px] md:text-xs text-gray-500">Ultimo ciclo: {lastCycle}</p>
-              </div>
-            </div>
+        {/* Main area con topbar sticky */}
+        <div className="flex-1 flex flex-col min-w-0">
+          <Topbar agentData={agentData} mode={agentData?.mode} />
 
-            <div className="flex items-center space-x-3 md:space-x-4">
-              <div className="text-right">
-                <p className="text-[10px] md:text-xs text-gray-500">Balance Broker</p>
-                <p className="text-xs md:text-sm font-bold text-white">
-                  ${agentData?.capital_usd?.toFixed(2) || '0.00'}
-                </p>
-                {agentData?.base_capital_usd && (
-                  <p className="text-[9px] md:text-[10px] text-gray-500">
-                    Base: ${agentData.base_capital_usd.toFixed(0)} | Riesgo: ${agentData.risk_per_trade_usd?.toFixed(0) || '—'}/trade
-                  </p>
-                )}
-              </div>
+          {/* Regime Banner (slim) */}
+          <RegimeBanner />
 
-              <span
-                className={`inline-flex items-center px-2 md:px-3 py-1 rounded-lg text-[10px] md:text-xs font-semibold ${
-                  agentData?.mode === 'LIVE'
-                    ? 'bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30'
-                    : agentData?.mode === 'SIMULATION'
-                    ? 'bg-blue-500/15 text-blue-400 ring-1 ring-blue-500/30'
-                    : agentData?.mode === 'SHUTDOWN'
-                    ? 'bg-red-500/15 text-red-400 ring-1 ring-red-500/30'
-                    : 'bg-gray-700 text-gray-400'
-                }`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
-                  agentData?.mode === 'LIVE' ? 'bg-emerald-400 animate-pulse' :
-                  agentData?.mode === 'SIMULATION' ? 'bg-blue-400 animate-pulse' :
-                  'bg-gray-500'
-                }`} />
-                {agentData?.mode || 'UNKNOWN'}
-              </span>
-            </div>
-          </div>
-        </div>
-      </header>
+          {/* Contenido principal */}
+          <main className="flex-1 px-3 md:px-4 py-3 md:py-4 space-y-3 md:space-y-4 max-w-[1600px] w-full mx-auto">
+            {activeTab === 'dashboard' && (
+              <>
+                <SurvivalBanner
+                  status={agentData?.survival_status}
+                  reason={agentData?.survival_reason}
+                />
+                {/* Split-view: Stats + Chart, Capital + Signals, Trades full */}
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 md:gap-4">
+                  <div className="xl:col-span-2">
+                    <PnLChart pnlHistory={pnlHistory} loading={loadingPnL} />
+                  </div>
+                  <div>
+                    <StatsCards agentData={agentData} orientation="vertical" />
+                  </div>
+                </div>
 
-      {/* Macro Regime Banner (solo visible si el LLM analyzer está habilitado) */}
-      <RegimeBanner />
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 md:gap-4">
+                  <div className="xl:col-span-2">
+                    <CapitalBreakdown agentData={agentData} />
+                  </div>
+                  <div>
+                    <SignalsPanel signals={signals} loading={loadingSignals} />
+                  </div>
+                </div>
 
-      {/* Desktop Tab Navigation (hidden on mobile) */}
-      <div className="hidden md:block sticky top-16 z-40 bg-gray-950/90 backdrop-blur-xl border-b border-gray-800/30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <nav className="flex space-x-1 py-2">
-            {TABS.map(({ id, label, icon: Icon }) => (
-              <button
-                key={id}
-                onClick={() => setActiveTab(id)}
-                className={`inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  activeTab === id
-                    ? 'bg-blue-500/15 text-blue-400'
-                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'
-                }`}
-              >
-                <Icon className="w-4 h-4 mr-1.5" />
-                {label}
-              </button>
-            ))}
-          </nav>
+                <TradesTable trades={trades} loading={loadingTrades} />
+
+                <SimulationControls agentMode={agentData?.mode} onUpdate={handleUpdate} />
+              </>
+            )}
+            {activeTab === 'strategies' && <StrategiesPage />}
+            {activeTab === 'broker' && <BrokerPage />}
+            {activeTab === 'learning' && <LearningPage />}
+          </main>
         </div>
       </div>
-
-      {/* Main Content */}
-      <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 md:py-6 space-y-4 md:space-y-6">
-        {activeTab === 'dashboard' && (
-          <>
-            <SurvivalBanner
-              status={agentData?.survival_status}
-              reason={agentData?.survival_reason}
-            />
-            <CapitalBreakdown agentData={agentData} />
-            <StatsCards agentData={agentData} />
-            <SimulationControls agentMode={agentData?.mode} onUpdate={handleUpdate} />
-            <PnLChart pnlHistory={pnlHistory} loading={loadingPnL} />
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-6">
-              <TradesTable trades={trades} loading={loadingTrades} />
-              <SignalsPanel signals={signals} loading={loadingSignals} />
-            </div>
-          </>
-        )}
-        {activeTab === 'strategies' && <StrategiesPage />}
-        {activeTab === 'broker' && <BrokerPage />}
-        {activeTab === 'learning' && <LearningPage />}
-      </main>
-
-      {/* Desktop Footer (hidden on mobile) */}
-      <footer className="hidden md:block relative z-10 border-t border-gray-800/50 mt-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <p className="text-xs text-gray-600 text-center">
-            Agente de Mercado v2.0.0 — Forex (Capital.com) | Oliver Velez
-          </p>
-        </div>
-      </footer>
 
       {/* Mobile Bottom Navigation */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-gray-950/95 backdrop-blur-xl border-t border-gray-800/50 pb-[env(safe-area-inset-bottom)]">
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-tv-bg/95 backdrop-blur-xl border-t border-tv-border pb-[env(safe-area-inset-bottom)]">
         <div className="flex justify-around items-center h-16">
           {TABS.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               onClick={() => setActiveTab(id)}
               className={`flex flex-col items-center justify-center flex-1 h-full transition-colors ${
-                activeTab === id
-                  ? 'text-blue-400'
-                  : 'text-gray-500'
+                activeTab === id ? 'text-tv-blue' : 'text-tv-text-dim'
               }`}
             >
-              <Icon className={`w-5 h-5 ${activeTab === id ? 'text-blue-400' : 'text-gray-500'}`} />
+              <Icon className="w-5 h-5" />
               <span className="text-[10px] mt-1 font-medium">{label}</span>
             </button>
           ))}
@@ -313,7 +237,9 @@ function DashboardContent() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <DashboardContent />
+      <DashboardProvider>
+        <DashboardContent />
+      </DashboardProvider>
     </QueryClientProvider>
   );
 }

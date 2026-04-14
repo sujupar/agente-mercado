@@ -9,7 +9,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { InfoTooltip } from '../ui/InfoTooltip';
 
-export function StatsCards({ agentData }) {
+export function StatsCards({ agentData, orientation = 'grid' }) {
   const totalPnl = agentData?.total_pnl || 0;
   const netProfit = agentData?.net_profit || 0;
   const drawdown = agentData?.drawdown_pct || 0;
@@ -77,6 +77,39 @@ export function StatsCards({ agentData }) {
     },
   ];
 
+  // Vertical: stack compacto densificado (para sidebar del dashboard split-view)
+  if (orientation === 'vertical') {
+    return (
+      <div className="flex flex-col gap-2">
+        {stats.map((stat, i) => (
+          <motion.div
+            key={stat.title}
+            initial={{ opacity: 0, x: 10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.3, delay: i * 0.04 }}
+          >
+            <div className="flex items-center gap-2 p-2.5 rounded-md bg-tv-panel border border-tv-border hover:border-tv-blue/40 transition-colors">
+              <div className={`${stat.iconBg} rounded-md p-1.5 flex-shrink-0`}>
+                <stat.icon className={`w-3.5 h-3.5 ${stat.color}`} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[10px] text-tv-text-dim uppercase tracking-wider leading-none flex items-center">
+                  {stat.title}
+                  <InfoTooltip text={stat.tooltip} />
+                </div>
+                <div className={`text-sm font-bold font-mono tabular-nums mt-0.5 truncate ${stat.color}`}>
+                  {stat.value}
+                </div>
+                <div className="text-[10px] text-tv-text-dim/70 font-mono truncate">{stat.subtitle}</div>
+              </div>
+            </div>
+          </motion.div>
+        ))}
+      </div>
+    );
+  }
+
+  // Grid: layout original (backward compat)
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {stats.map((stat, i) => (
@@ -93,7 +126,7 @@ export function StatsCards({ agentData }) {
                   {stat.title}
                   <InfoTooltip text={stat.tooltip} />
                 </p>
-                <p className={`text-2xl font-bold mt-1 ${stat.color}`}>
+                <p className={`text-2xl font-bold mt-1 font-mono tabular-nums ${stat.color}`}>
                   {stat.value}
                 </p>
                 <p className="text-xs text-gray-500 mt-1">{stat.subtitle}</p>

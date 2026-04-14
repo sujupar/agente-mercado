@@ -4,10 +4,14 @@ import { useStrategies } from '../../hooks/useStrategies';
 import { StrategyCard } from './StrategyCard';
 import { StrategyDetail } from './StrategyDetail';
 import { DateFilter } from '../DateFilter';
+import { useDashboardContext } from '../../context/DashboardContext';
 
 export function StrategiesPage() {
-  const [fromDate, setFromDate] = useState(null);
-  const [toDate, setToDate] = useState(null);
+  // Usa el DateFilter GLOBAL del context (default HOY)
+  const { globalFromDate, globalToDate, setGlobalDate } = useDashboardContext();
+  const fromDate = globalFromDate;
+  const toDate = globalToDate;
+
   const { data: strategies, isLoading } = useStrategies({ fromDate, toDate });
   const [selectedStrategy, setSelectedStrategy] = useState(null);
 
@@ -63,12 +67,15 @@ export function StrategiesPage() {
       animate={{ opacity: 1 }}
       className="space-y-6"
     >
-      {/* Date filter */}
-      <DateFilter
-        fromDate={fromDate}
-        toDate={toDate}
-        onChange={(from, to) => { setFromDate(from); setToDate(to); }}
-      />
+      {/* Date filter local (sincronizado con el global del topbar) */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-xs text-tv-text-dim uppercase tracking-wider">Periodo:</span>
+        <DateFilter
+          fromDate={fromDate}
+          toDate={toDate}
+          onChange={setGlobalDate}
+        />
+      </div>
 
       {/* Global summary */}
       <div className="grid grid-cols-4 gap-3">

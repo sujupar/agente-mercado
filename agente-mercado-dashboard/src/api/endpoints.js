@@ -192,6 +192,19 @@ export const api = {
 
   getBrokerAccount: () => apiClient.get('/broker/account'),
   getBrokerPositions: () => apiClient.get('/broker/positions'),
+
+  /**
+   * Obtener environment actual del broker (DEMO/LIVE).
+   * @returns {Promise} {environment, connected, open_positions, updated_at, source}
+   */
+  getBrokerEnvironment: () => apiClient.get('/broker/environment'),
+
+  /**
+   * Cambiar environment del broker (DEMO o LIVE).
+   * Para LIVE requiere confirm_live=true.
+   * @param {{environment: 'DEMO'|'LIVE', confirm_live: boolean}} payload
+   */
+  setBrokerEnvironment: (payload) => apiClient.post('/broker/environment', payload),
   getBrokerSyncStatus: () => apiClient.get('/broker/sync-status'),
   forceBrokerSync: () => apiClient.post('/broker/sync'),
 
