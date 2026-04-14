@@ -1073,42 +1073,83 @@ async def get_improvement_rules(
 
 # ── Broker ─────────────────────────────────────────────────
 
-async def _get_broker(environment: str = "DEMO") -> BrokerInterface:
-    """Crea instancia del broker para el environment dado (DEMO o LIVE).
+class _SharedBroker:
+    """Wrapper que reutiliza el broker singleton del scheduler.
 
-    En dual-mode, DEMO usa las credenciales CAPITAL_* originales
-    y LIVE usa las CAPITAL_*_LIVE.
+    Evita crear sesiones CST nuevas en cada request HTTP (que causaba
+    rate limits de Capital.com y conexiones intermitentes en el dashboard).
+
+    close() es no-op para NO cerrar el singleton compartido.
+    """
+
+    def __init__(self, broker: BrokerInterface):
+        self._broker = broker
+
+    def __getattr__(self, name):
+        # Delega todo al broker real
+        return getattr(self._broker, name)
+
+    async def close(self):
+        # NO cerrar — el singleton del scheduler sigue vivo
+        pass
+
+
+async def _get_broker(environment: str = "DEMO") -> BrokerInterface:
+    """Retorna un wrapper sobre el broker singleton del scheduler.
+
+    En dual-mode, hay dos singletons (DEMO + LIVE) gestionados por el
+    scheduler. Los endpoints HTTP reutilizan esos singletons en vez de
+    crear sesiones nuevas (que saturaba el rate limit de Capital.com).
     """
     env = (environment or "DEMO").upper()
     provider = settings.broker_provider.lower()
+
+    # Capital.com: intentar reutilizar el singleton del scheduler
     if provider == 'capital':
-        from app.broker.capital import CapitalBroker
+        from app.core.scheduler import get_broker as scheduler_get_broker
+
+        # Verificar credenciales antes de buscar singleton
         if env == "LIVE":
             if not settings.capital_api_key_live or not settings.capital_identifier_live:
                 raise HTTPException(
                     status_code=503,
                     detail="Cuenta LIVE no configurada (faltan credenciales CAPITAL_*_LIVE)",
                 )
+        else:  # DEMO
+            if not settings.capital_api_key or not settings.capital_identifier:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Cuenta DEMO no configurada",
+                )
+
+        broker = scheduler_get_broker(env)
+        if broker is not None:
+            return _SharedBroker(broker)
+
+        # Fallback: si el scheduler aún no inicializó el broker (ej. startup),
+        # crear uno efímero. close() cerrará la sesión en ese caso.
+        from app.broker.capital import CapitalBroker
+        if env == "LIVE":
             return CapitalBroker(
                 api_key=settings.capital_api_key_live,
                 identifier=settings.capital_identifier_live,
                 password=settings.capital_password_live,
                 environment="LIVE",
             )
-        # DEMO (default)
         return CapitalBroker(
             api_key=settings.capital_api_key,
             identifier=settings.capital_identifier,
             password=settings.capital_password,
             environment="DEMO",
         )
-    else:
-        from app.broker.oanda import OANDABroker
-        return OANDABroker(
-            account_id=settings.oanda_account_id,
-            access_token=settings.oanda_access_token,
-            environment=settings.oanda_environment,
-        )
+
+    # OANDA legacy (sin singleton compartido, mantiene comportamiento original)
+    from app.broker.oanda import OANDABroker
+    return OANDABroker(
+        account_id=settings.oanda_account_id,
+        access_token=settings.oanda_access_token,
+        environment=settings.oanda_environment,
+    )
 
 
 @router.get("/broker/account", response_model=BrokerAccountOut)
