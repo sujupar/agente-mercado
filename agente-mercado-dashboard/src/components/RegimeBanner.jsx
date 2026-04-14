@@ -1,45 +1,39 @@
 /**
- * RegimeBanner
+ * RegimeBanner — Variante slim 1 línea (estilo TradingView).
  *
- * Banner que muestra el régimen macro actual clasificado por el LLM.
- * Se muestra debajo del header, encima del main content.
- *
- * Estados visuales:
- * - RISK_ON: verde (trending bullish)
- * - RISK_OFF: rojo (flight to safety)
- * - TRANSITION: amarillo (cambiando)
- * - UNCLEAR: gris (sin señal clara)
+ * Muestra el régimen macro clasificado por el LLM de forma densa,
+ * debajo del topbar, encima del main content.
  */
 
 import { useRegime } from '../hooks/useRegime';
 
 const REGIME_STYLES = {
   RISK_ON: {
-    bg: 'bg-emerald-500/10',
-    border: 'border-emerald-500/30',
-    dot: 'bg-emerald-400',
-    text: 'text-emerald-300',
+    bg: 'bg-tv-up/8',
+    border: 'border-tv-up/25',
+    dot: 'bg-tv-up',
+    text: 'text-tv-up',
     label: 'RISK ON',
   },
   RISK_OFF: {
-    bg: 'bg-red-500/10',
-    border: 'border-red-500/30',
-    dot: 'bg-red-400',
-    text: 'text-red-300',
+    bg: 'bg-tv-down/8',
+    border: 'border-tv-down/25',
+    dot: 'bg-tv-down',
+    text: 'text-tv-down',
     label: 'RISK OFF',
   },
   TRANSITION: {
-    bg: 'bg-amber-500/10',
-    border: 'border-amber-500/30',
-    dot: 'bg-amber-400',
-    text: 'text-amber-300',
+    bg: 'bg-tv-accent/8',
+    border: 'border-tv-accent/25',
+    dot: 'bg-tv-accent',
+    text: 'text-tv-accent',
     label: 'TRANSITION',
   },
   UNCLEAR: {
-    bg: 'bg-gray-500/10',
-    border: 'border-gray-500/30',
-    dot: 'bg-gray-400',
-    text: 'text-gray-300',
+    bg: 'bg-tv-panel-2',
+    border: 'border-tv-border',
+    dot: 'bg-tv-text-dim',
+    text: 'text-tv-text-dim',
     label: 'UNCLEAR',
   },
 };
@@ -50,13 +44,18 @@ const STRATEGY_LABELS = {
   s3_smc_sensei: 'S3',
   s4_turtle_breakout: 'S4',
   s5_connors_rsi2: 'S5',
+  s6_pullback_m5: 'S6',
+  s7_double_ema_trend: 'S7',
+  s8_rsi_ema_pullback: 'S8',
+  s9_momentum_breakout: 'S9',
+  s10_session_reversal: 'S10',
 };
 
 export function RegimeBanner() {
   const { data: regime, isLoading } = useRegime();
 
   if (isLoading || !regime) return null;
-  if (!regime.enabled) return null;  // no mostrar si el LLM no está configurado
+  if (!regime.enabled) return null;
 
   const style = REGIME_STYLES[regime.regime] || REGIME_STYLES.UNCLEAR;
   const confidencePct = Math.round((regime.confidence || 0) * 100);
@@ -67,32 +66,30 @@ export function RegimeBanner() {
 
   return (
     <div className={`${style.bg} border-b ${style.border}`}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center space-x-3">
-            <span className={`w-2 h-2 rounded-full ${style.dot} animate-pulse`} />
-            <span className={`text-xs font-bold ${style.text}`}>
-              {style.label}
-            </span>
-            <span className="text-[10px] text-gray-500 uppercase">Régimen macro</span>
-            <span className={`text-xs ${style.text}`}>
-              Confianza: <span className="font-semibold">{confidencePct}%</span>
-            </span>
-            <span className={`text-xs ${style.text}`}>
-              Riesgo: <span className="font-semibold">{multiplier}x</span>
-            </span>
-            {activeStrats.length > 0 && (
-              <span className="text-xs text-gray-400">
-                Activas: <span className="font-semibold text-gray-200">{activeStrats.join(', ')}</span>
-              </span>
-            )}
-          </div>
-          {regime.reasoning && (
-            <p className="text-[11px] text-gray-400 italic max-w-xl truncate" title={regime.reasoning}>
-              {regime.reasoning}
-            </p>
-          )}
+      <div className="px-3 md:px-4 h-7 flex items-center gap-3 text-[11px] max-w-[1600px] w-full mx-auto">
+        <div className="flex items-center gap-1.5">
+          <span className={`w-1.5 h-1.5 rounded-full ${style.dot} animate-pulse`} />
+          <span className={`font-bold tracking-wider ${style.text}`}>{style.label}</span>
         </div>
+        <span className="text-tv-text-dim">
+          Conf <span className={`font-semibold ${style.text}`}>{confidencePct}%</span>
+        </span>
+        <span className="text-tv-text-dim">
+          Risk <span className={`font-semibold ${style.text}`}>{multiplier}x</span>
+        </span>
+        {activeStrats.length > 0 && (
+          <span className="text-tv-text-dim hidden sm:inline">
+            Activas <span className="font-semibold text-tv-text">{activeStrats.join(', ')}</span>
+          </span>
+        )}
+        {regime.reasoning && (
+          <span
+            className="text-tv-text-dim italic truncate hidden md:inline ml-auto max-w-xl"
+            title={regime.reasoning}
+          >
+            {regime.reasoning}
+          </span>
+        )}
       </div>
     </div>
   );

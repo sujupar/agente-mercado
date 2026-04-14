@@ -9,6 +9,8 @@ import {
 } from '@heroicons/react/24/outline';
 import { useBrokerAccount, useBrokerPositions, useBrokerSync, useForceBrokerSync } from '../../hooks/useBroker';
 import { useAllMarketStates } from '../../hooks/useMarketState';
+import { useBrokerEnvironment } from '../../hooks/useBrokerEnvironment';
+import { AccountSelector } from '../Layout/AccountSelector';
 
 function ConnectionBadge({ connected }) {
   return (
@@ -354,10 +356,43 @@ export function BrokerPage() {
   const { data: positions, isLoading: loadingPositions } = useBrokerPositions();
   const { data: syncData, isLoading: loadingSync } = useBrokerSync();
   const { data: marketData, isLoading: loadingMarket } = useAllMarketStates();
+  const { data: envData } = useBrokerEnvironment();
   const syncMutation = useForceBrokerSync();
+
+  const isLive = envData?.environment === 'LIVE';
 
   return (
     <div className="space-y-4 md:space-y-6">
+      {/* Header: entorno broker prominente */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className={`rounded-2xl border p-4 md:p-5 ${
+          isLive
+            ? 'bg-tv-down/8 border-tv-down/40'
+            : 'bg-tv-blue/8 border-tv-blue/30'
+        }`}
+      >
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-tv-text-dim leading-none">
+                Cuenta Capital.com
+              </div>
+              <div className={`text-sm font-bold mt-1 ${isLive ? 'text-tv-down' : 'text-tv-blue'}`}>
+                {isLive ? 'CUENTA REAL — OPERANDO CON DINERO REAL' : 'CUENTA DEMO — Dinero simulado'}
+              </div>
+              <div className="text-[11px] text-tv-text-dim mt-0.5">
+                {isLive
+                  ? 'Solo S1 Pullback EMA20 ejecutará trades. Máximo 1 posición abierta.'
+                  : 'Todas las estrategias operan libremente con fondos de prueba.'}
+              </div>
+            </div>
+          </div>
+          <AccountSelector />
+        </div>
+      </motion.div>
+
       <AccountCard account={account} isLoading={loadingAccount} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
