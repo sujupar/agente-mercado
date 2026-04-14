@@ -373,13 +373,20 @@ class SyncResultOut(BaseModel):
 # ── Broker environment (DEMO/LIVE switch) ────────────────────────
 
 class BrokerEnvOut(BaseModel):
-    """Estado actual del environment del broker."""
+    """Estado de un environment del broker (uno por DEMO, otro por LIVE)."""
     environment: str  # "DEMO" | "LIVE"
     previous: str | None = None
     updated_at: datetime | None = None
     connected: bool
     open_positions: int
+    configured: bool = True  # True si hay credenciales para este env
+    balance: float | None = None
     source: str = "db"  # "db" | "env"
+
+
+class BrokerEnvironmentsOut(BaseModel):
+    """Respuesta del endpoint dual: estado de ambos environments en paralelo."""
+    environments: list[BrokerEnvOut]
 
 
 class SetBrokerEnvIn(BaseModel):

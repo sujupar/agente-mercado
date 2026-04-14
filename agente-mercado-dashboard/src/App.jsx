@@ -208,7 +208,7 @@ function DashboardContent() {
         />
 
         <div className="flex-1 flex flex-col min-w-0">
-          <Topbar agentData={agentData} mode={agentData?.mode} activeTab={activeTab} />
+          <Topbar agentData={agentData} activeTab={activeTab} />
 
           <main className="flex-1 px-5 md:px-8 py-6 md:py-8 space-y-5 max-w-[1400px] w-full mx-auto">
             {activeTab === 'dashboard' && (

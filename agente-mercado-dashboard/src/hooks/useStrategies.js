@@ -1,11 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/endpoints';
+import { useDashboardContext } from '../context/DashboardContext';
 
 export function useStrategies({ fromDate, toDate } = {}) {
+  const { activeEnvironment } = useDashboardContext();
   return useQuery({
-    queryKey: ['strategies', fromDate, toDate],
+    queryKey: ['strategies', fromDate, toDate, activeEnvironment],
     queryFn: async () => {
-      const params = {};
+      const params = { environment: activeEnvironment };
       if (fromDate) params.from_date = fromDate;
       if (toDate) params.to_date = toDate;
       const response = await api.getStrategies(params);
@@ -18,10 +20,11 @@ export function useStrategies({ fromDate, toDate } = {}) {
 }
 
 export function useStrategyTrades(strategyId, { fromDate, toDate } = {}) {
+  const { activeEnvironment } = useDashboardContext();
   return useQuery({
-    queryKey: ['strategyTrades', strategyId, fromDate, toDate],
+    queryKey: ['strategyTrades', strategyId, fromDate, toDate, activeEnvironment],
     queryFn: async () => {
-      const params = { limit: 50 };
+      const params = { limit: 50, environment: activeEnvironment };
       if (fromDate) params.from_date = fromDate;
       if (toDate) params.to_date = toDate;
       const response = await api.getStrategyTrades(strategyId, params);
@@ -34,10 +37,11 @@ export function useStrategyTrades(strategyId, { fromDate, toDate } = {}) {
 }
 
 export function useStrategyBitacora(strategyId) {
+  const { activeEnvironment } = useDashboardContext();
   return useQuery({
-    queryKey: ['strategyBitacora', strategyId],
+    queryKey: ['strategyBitacora', strategyId, activeEnvironment],
     queryFn: async () => {
-      const response = await api.getStrategyBitacora(strategyId, 30);
+      const response = await api.getStrategyBitacora(strategyId, 30, activeEnvironment);
       return response.data;
     },
     enabled: !!strategyId,

@@ -56,7 +56,7 @@ from app.api.schemas import (
 from app.broker.base import BrokerInterface
 from app.config import settings
 from app.core.state import StateManager
-from app.db.database import async_session_factory, get_session
+from app.db.database import get_session
 from app.db.models import AgentState, Bitacora, BrokerSyncLog, CostLog, ImprovementCycle, LearningLog, LearningReport, RegimeHistory, Signal, Strategy, Trade
 from app.forex.sessions import get_current_session, is_forex_market_open, is_trading_session
 from app.learning.adaptive import AdaptiveFilter
@@ -90,10 +90,14 @@ async def health_check(session: AsyncSession = Depends(get_session)):
 
 @router.get("/status", response_model=AgentStatus)
 async def get_status(
+    environment: str = "DEMO",
     session: AsyncSession = Depends(get_session),
 ):
     # Usar broker_balance real (no sumar capital_usd de cada estrategia)
-    states_result = await session.execute(select(AgentState))
+    env = environment.upper()
+    states_result = await session.execute(
+        select(AgentState).where(AgentState.environment == env)
+    )
     all_states = states_result.scalars().all()
 
     # Capital = broker balance real de Capital.com (compartido entre estrategias)
@@ -122,10 +126,10 @@ async def get_status(
     llm_usage = await budget.get_usage()
     await budget.close()
 
-    # Capital invertido en posiciones abiertas
+    # Capital invertido en posiciones abiertas (filtrado por env)
     positions_result = await session.execute(
         select(func.coalesce(func.sum(Trade.size_usd), 0.0))
-        .where(Trade.status == "OPEN")
+        .where(Trade.status == "OPEN", Trade.environment == env)
     )
     capital_in_positions = float(positions_result.scalar() or 0.0)
 
@@ -204,10 +208,11 @@ async def get_trades(
     offset: int = 0,
     status: str | None = None,
     winner: bool | None = None,
+    environment: str = "DEMO",
     session: AsyncSession = Depends(get_session),
     _user: str = Depends(verify_token),
 ):
-    query = select(Trade)
+    query = select(Trade).where(Trade.environment == environment.upper())
 
     # Filtros opcionales
     if status:
@@ -246,11 +251,15 @@ async def get_trades(
 @router.get("/signals", response_model=list[SignalOut])
 async def get_signals(
     limit: int = 50,
+    environment: str = "DEMO",
     session: AsyncSession = Depends(get_session),
     _user: str = Depends(verify_token),
 ):
     result = await session.execute(
-        select(Signal).order_by(Signal.created_at.desc()).limit(limit)
+        select(Signal)
+        .where(Signal.environment == environment.upper())
+        .order_by(Signal.created_at.desc())
+        .limit(limit)
     )
     signals = result.scalars().all()
     return [
@@ -705,29 +714,44 @@ async def get_strategies(
     session: AsyncSession = Depends(get_session),
     from_date: str | None = None,
     to_date: str | None = None,
+    environment: str = "DEMO",
     _user: str = Depends(verify_token),
 ):
-    """Lista todas las estrategias con su estado actual. Filtro opcional por fecha."""
+    """Lista estrategias con su estado actual en el env dado. Filtro opcional por fecha.
+
+    En LIVE solo retorna las estrategias habilitadas para LIVE (STRATEGIES_ENABLED_IN_LIVE).
+    """
+    env = environment.upper()
+    from app.strategies.registry import STRATEGIES_ENABLED_IN_LIVE
+
     result = await session.execute(select(Strategy).order_by(Strategy.id))
     strategies = result.scalars().all()
+
+    # En LIVE, filtrar solo las estrategias habilitadas
+    if env == "LIVE":
+        strategies = [s for s in strategies if s.id in STRATEGIES_ENABLED_IN_LIVE]
 
     out = []
     improvement_engine = ImprovementEngine(session)
 
-    # Si hay filtro de fecha, calcular stats desde trades directamente
     use_date_filter = from_date or to_date
 
     for s in strategies:
-        # Obtener AgentState de esta estrategia
+        # Obtener AgentState de esta estrategia + env
         state_result = await session.execute(
-            select(AgentState).where(AgentState.strategy_id == s.id)
+            select(AgentState).where(
+                AgentState.strategy_id == s.id,
+                AgentState.environment == env,
+            )
         )
         state = state_result.scalar_one_or_none()
 
         if use_date_filter:
-            # Calcular stats filtrados por fecha
+            # Calcular stats filtrados por fecha (dentro del env)
             trade_query = select(Trade).where(
-                Trade.strategy_id == s.id, Trade.status == "CLOSED",
+                Trade.strategy_id == s.id,
+                Trade.environment == env,
+                Trade.status == "CLOSED",
             )
             if from_date:
                 trade_query = trade_query.where(Trade.created_at >= datetime.fromisoformat(from_date))
@@ -747,10 +771,11 @@ async def get_strategies(
             total = trades_won + trades_lost
             wr = trades_won / total if total > 0 else 0.0
 
-        # Cross-check: positions_open desde Trade table (fuente de verdad)
+        # Cross-check: positions_open desde Trade table (fuente de verdad, filtrado por env)
         actual_open_result = await session.execute(
             select(func.count(Trade.id)).where(
                 Trade.strategy_id == s.id,
+                Trade.environment == env,
                 Trade.status == "OPEN",
             )
         )
@@ -803,11 +828,15 @@ async def get_strategy_trades(
     status: str | None = None,
     from_date: str | None = None,
     to_date: str | None = None,
+    environment: str = "DEMO",
     session: AsyncSession = Depends(get_session),
     _user: str = Depends(verify_token),
 ):
     """Trades de una estrategia, con filtro opcional por fecha (ISO: 2026-04-01)."""
-    query = select(Trade).where(Trade.strategy_id == strategy_id)
+    query = select(Trade).where(
+        Trade.strategy_id == strategy_id,
+        Trade.environment == environment.upper(),
+    )
     if status:
         query = query.where(Trade.status == status.upper())
     if from_date:
@@ -835,13 +864,17 @@ async def get_strategy_trades(
 async def get_strategy_bitacora(
     strategy_id: str,
     limit: int = 50,
+    environment: str = "DEMO",
     session: AsyncSession = Depends(get_session),
     _user: str = Depends(verify_token),
 ):
-    """Bitacora (diario de trading) de una estrategia."""
+    """Bitacora (diario de trading) de una estrategia en el env dado."""
     result = await session.execute(
         select(Bitacora)
-        .where(Bitacora.strategy_id == strategy_id)
+        .where(
+            Bitacora.strategy_id == strategy_id,
+            Bitacora.environment == environment.upper(),
+        )
         .order_by(Bitacora.created_at.desc())
         .limit(limit)
     )
@@ -1040,16 +1073,34 @@ async def get_improvement_rules(
 
 # ── Broker ─────────────────────────────────────────────────
 
-async def _get_broker() -> BrokerInterface:
-    """Crea instancia del broker según la configuración."""
+async def _get_broker(environment: str = "DEMO") -> BrokerInterface:
+    """Crea instancia del broker para el environment dado (DEMO o LIVE).
+
+    En dual-mode, DEMO usa las credenciales CAPITAL_* originales
+    y LIVE usa las CAPITAL_*_LIVE.
+    """
+    env = (environment or "DEMO").upper()
     provider = settings.broker_provider.lower()
     if provider == 'capital':
         from app.broker.capital import CapitalBroker
+        if env == "LIVE":
+            if not settings.capital_api_key_live or not settings.capital_identifier_live:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Cuenta LIVE no configurada (faltan credenciales CAPITAL_*_LIVE)",
+                )
+            return CapitalBroker(
+                api_key=settings.capital_api_key_live,
+                identifier=settings.capital_identifier_live,
+                password=settings.capital_password_live,
+                environment="LIVE",
+            )
+        # DEMO (default)
         return CapitalBroker(
             api_key=settings.capital_api_key,
             identifier=settings.capital_identifier,
             password=settings.capital_password,
-            environment=settings.capital_environment,
+            environment="DEMO",
         )
     else:
         from app.broker.oanda import OANDABroker
@@ -1062,10 +1113,11 @@ async def _get_broker() -> BrokerInterface:
 
 @router.get("/broker/account", response_model=BrokerAccountOut)
 async def get_broker_account(
+    environment: str = "DEMO",
     _user: str = Depends(verify_token),
 ):
-    """Estado de la cuenta en OANDA (balance, equity, margen)."""
-    broker = await _get_broker()
+    """Estado de la cuenta del broker (balance, equity, margen) para el env dado."""
+    broker = await _get_broker(environment)
     try:
         connected = await broker.is_connected()
         if not connected:
@@ -1090,10 +1142,11 @@ async def get_broker_account(
 
 @router.get("/broker/positions", response_model=list[BrokerPositionOut])
 async def get_broker_positions(
+    environment: str = "DEMO",
     _user: str = Depends(verify_token),
 ):
-    """Posiciones abiertas en OANDA."""
-    broker = await _get_broker()
+    """Posiciones abiertas en el broker para el env dado."""
+    broker = await _get_broker(environment)
     try:
         positions = await broker.get_positions()
         result = []
@@ -1312,191 +1365,72 @@ _last_env_switch_at: datetime | None = None
 _ENV_SWITCH_COOLDOWN_SEC = 60
 
 
-@router.get("/broker/environment", response_model=BrokerEnvOut)
+@router.get("/broker/environment")
 async def get_broker_environment(
     _user: str = Depends(verify_token),
 ):
-    """Retorna el environment actual del broker (DEMO/LIVE)."""
-    from app.core.scheduler import get_current_environment
-    from app.db.system_config import get_config
+    """Retorna el estado de AMBOS environments (dual-mode).
 
-    current = await get_current_environment()
+    En dual-mode, DEMO y LIVE corren en paralelo. Retorna un array con el
+    estado de cada uno (configured, connected, balance, open_positions).
+    """
+    results = []
 
-    # Obtener metadata del último cambio
-    updated_at = None
-    source = "env"
-    try:
-        async with async_session_factory() as session:
-            from app.db.models import SystemConfig
-            result = await session.execute(
-                select(SystemConfig).where(SystemConfig.key == "broker.environment")
-            )
-            row = result.scalar_one_or_none()
-            if row:
-                updated_at = row.updated_at
-                source = "db"
-    except Exception:
-        log.exception("Error leyendo metadata de SystemConfig")
+    for env in ("DEMO", "LIVE"):
+        # Verificar si hay credenciales configuradas para este env
+        if env == "DEMO":
+            configured = bool(settings.capital_api_key and settings.capital_identifier)
+        else:  # LIVE
+            configured = bool(settings.capital_api_key_live and settings.capital_identifier_live)
 
-    # Estado de conexión + posiciones
-    connected = False
-    open_positions = 0
-    try:
-        broker = await _get_broker()
-        connected = await broker.is_connected()
-        if connected:
-            positions = await broker.get_positions()
-            open_positions = len(positions)
-    except Exception:
-        log.exception("Error obteniendo estado del broker")
+        connected = False
+        open_positions = 0
+        balance = None
 
-    return BrokerEnvOut(
-        environment=current,
-        previous=None,
-        updated_at=updated_at,
-        connected=connected,
-        open_positions=open_positions,
-        source=source,
-    )
+        if configured:
+            try:
+                broker = await _get_broker(env)
+                try:
+                    connected = await broker.is_connected()
+                    if connected:
+                        account = await broker.get_account()
+                        balance = account.balance
+                        positions = await broker.get_positions()
+                        open_positions = len(positions)
+                finally:
+                    await broker.close()
+            except Exception:
+                log.exception("Error obteniendo estado broker env=%s", env)
+
+        results.append(BrokerEnvOut(
+            environment=env,
+            connected=connected,
+            open_positions=open_positions,
+            configured=configured,
+            balance=balance,
+            source="db",
+        ))
+
+    return {"environments": results}
 
 
-@router.post("/broker/environment", response_model=BrokerEnvOut)
+@router.post("/broker/environment")
 async def set_broker_environment(
     payload: SetBrokerEnvIn,
     _user: str = Depends(verify_token),
 ):
-    """Cambia el environment del broker (DEMO/LIVE) en runtime sin restart.
+    """[DEPRECATED] El switch exclusivo DEMO↔LIVE ya no aplica.
 
-    Flujo:
-    1. Validar que si es LIVE, confirm_live=True
-    2. Rate limit: max 1 switch cada 60s
-    3. Probar conexión con nuevo env (efímero)
-    4. Si falla → 502, NO persiste
-    5. Si OK → persiste en SystemConfig, llama reload_broker()
-    6. Retorna estado actualizado
+    En dual-mode, ambos ambientes corren en paralelo automáticamente si
+    sus credenciales están configuradas en Railway. Este endpoint se mantiene
+    solo por compatibilidad y retorna 410 Gone.
     """
-    global _last_env_switch_at
-    from app.broker.capital import CapitalBroker
-    from app.core.scheduler import get_current_environment, reload_broker
-    from app.db.system_config import set_config
-
-    target_env = payload.environment.upper()
-
-    # 1. Validación de confirmación LIVE
-    if target_env == "LIVE" and not payload.confirm_live:
-        raise HTTPException(
-            status_code=400,
-            detail="Cambio a LIVE requiere confirm_live=true explícitamente.",
-        )
-
-    # 2. Rate limit
-    now = datetime.now(timezone.utc)
-    if _last_env_switch_at is not None:
-        elapsed = (now - _last_env_switch_at).total_seconds()
-        if elapsed < _ENV_SWITCH_COOLDOWN_SEC:
-            raise HTTPException(
-                status_code=429,
-                detail=f"Rate limit: espera {_ENV_SWITCH_COOLDOWN_SEC - int(elapsed)}s antes del próximo switch.",
-            )
-
-    previous_env = await get_current_environment()
-
-    # Si ya está en el env objetivo: no-op
-    if previous_env == target_env:
-        broker = await _get_broker()
-        connected = await broker.is_connected() if broker else False
-        open_positions = 0
-        if connected:
-            try:
-                open_positions = len(await broker.get_positions())
-            except Exception:
-                pass
-        return BrokerEnvOut(
-            environment=target_env,
-            previous=previous_env,
-            updated_at=now,
-            connected=connected,
-            open_positions=open_positions,
-            source="db",
-        )
-
-    # 3. Probar conexión con nuevo env (broker efímero)
-    test_broker = CapitalBroker(
-        api_key=settings.capital_api_key,
-        identifier=settings.capital_identifier,
-        password=settings.capital_password,
-        environment=target_env,
-    )
-    try:
-        connected = await test_broker.is_connected()
-        if not connected:
-            raise RuntimeError("is_connected() returned False")
-    except Exception as e:
-        log.exception("Fallo al probar conexión en env=%s", target_env)
-        try:
-            await test_broker.close()
-        except Exception:
-            pass
-        raise HTTPException(
-            status_code=502,
-            detail=f"No se pudo conectar a Capital.com en env={target_env}: {e}",
-        )
-    finally:
-        try:
-            await test_broker.close()
-        except Exception:
-            pass
-
-    # 4. Persistir en SystemConfig
-    try:
-        await set_config("broker.environment", target_env, updated_by=_user)
-    except Exception as e:
-        log.exception("Fallo al persistir broker.environment")
-        raise HTTPException(status_code=500, detail=f"Error DB: {e}")
-
-    # 5. Reload broker singleton
-    try:
-        await reload_broker(target_env)
-    except Exception as e:
-        # Rollback: revertir DB al env anterior
-        log.exception("Fallo en reload_broker, haciendo rollback")
-        try:
-            await set_config("broker.environment", previous_env, updated_by=f"{_user}_rollback")
-            await reload_broker(previous_env)
-        except Exception:
-            log.critical("Rollback también falló — sistema en estado degradado")
-        raise HTTPException(
-            status_code=500,
-            detail=f"reload_broker falló (rollback ejecutado): {e}",
-        )
-
-    _last_env_switch_at = now
-
-    # 6. Disparar sync inmediato para actualizar AgentState.broker_balance
-    try:
-        from app.core.scheduler import _ensure_orchestrator
-        orch = _ensure_orchestrator()
-        if orch:
-            await orch.sync_broker_account()
-    except Exception:
-        log.exception("Error en sync post-switch (no crítico)")
-
-    # Contar posiciones en el nuevo env
-    new_broker = await _get_broker()
-    open_positions = 0
-    try:
-        if new_broker:
-            open_positions = len(await new_broker.get_positions())
-    except Exception:
-        pass
-
-    return BrokerEnvOut(
-        environment=target_env,
-        previous=previous_env,
-        updated_at=now,
-        connected=True,
-        open_positions=open_positions,
-        source="db",
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Endpoint deprecated. En dual-mode, DEMO y LIVE corren en paralelo. "
+            "Configura credenciales CAPITAL_*_LIVE en Railway para activar LIVE."
+        ),
     )
 
 

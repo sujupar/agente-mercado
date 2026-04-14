@@ -14,8 +14,7 @@ import {
   useForceBrokerSync,
 } from '../../hooks/useBroker';
 import { useAllMarketStates } from '../../hooks/useMarketState';
-import { useBrokerEnvironment } from '../../hooks/useBrokerEnvironment';
-import { AccountSelector } from '../Layout/AccountSelector';
+import { useBrokerEnvironments } from '../../hooks/useBrokerEnvironments';
 import { PageHeader } from '../Layout/PageHeader';
 
 function ConnectionBadge({ connected }) {
@@ -35,7 +34,24 @@ function ConnectionBadge({ connected }) {
   );
 }
 
-function AccountCard({ account, isLoading }) {
+function EnvBadge({ env }) {
+  const isLive = env === 'LIVE';
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${
+        isLive ? 'bg-fm-danger text-white' : 'bg-fm-primary-soft text-fm-primary'
+      }`}
+    >
+      {isLive ? 'CUENTA REAL' : 'DEMO'}
+    </span>
+  );
+}
+
+function AccountCard({ env }) {
+  const { data: account, isLoading } = useBrokerAccount(env);
+  const { data: positions } = useBrokerPositions(env);
+  const isLive = env === 'LIVE';
+
   if (isLoading) {
     return (
       <div className="bg-fm-surface border border-fm-border shadow-fm-sm rounded-xl p-6 animate-pulse">
@@ -49,7 +65,33 @@ function AccountCard({ account, isLoading }) {
     );
   }
 
-  if (!account) return null;
+  if (!account || !account.connected) {
+    return (
+      <div
+        className={`bg-fm-surface border rounded-xl p-6 shadow-fm-sm ${
+          isLive ? 'border-fm-danger/30' : 'border-fm-border'
+        }`}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-semibold text-fm-text">Cuenta Capital.com</h3>
+          <EnvBadge env={env} />
+        </div>
+        <div className="text-center py-8">
+          <ExclamationTriangleIcon className="w-10 h-10 text-fm-text-dim/50 mx-auto mb-2" />
+          <p className="text-sm text-fm-text-2">
+            {isLive
+              ? 'Cuenta real no configurada o sin conexión'
+              : 'Cuenta demo sin conexión'}
+          </p>
+          {isLive && (
+            <p className="text-xs text-fm-text-dim mt-1">
+              Configura CAPITAL_*_LIVE en Railway para activar
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   const stats = [
     { label: 'Balance', value: `$${account.balance?.toFixed(2)}`, color: 'text-fm-text' },
@@ -61,21 +103,30 @@ function AccountCard({ account, isLoading }) {
     },
     { label: 'Margen usado', value: `$${account.margin_used?.toFixed(2)}`, color: 'text-fm-warning' },
     {
-      label: 'Margen disponible',
+      label: 'Disponible',
       value: `$${account.margin_available?.toFixed(2)}`,
       color: 'text-fm-primary',
     },
-    { label: 'Trades abiertos', value: account.open_trades, color: 'text-fm-text' },
+    {
+      label: 'Abiertas',
+      value: positions?.length ?? account.open_trades,
+      color: 'text-fm-text',
+    },
   ];
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-fm-surface border border-fm-border shadow-fm-sm rounded-xl p-6"
+      className={`bg-fm-surface border shadow-fm-sm rounded-xl p-6 ${
+        isLive ? 'border-fm-danger/30 ring-1 ring-fm-danger/10' : 'border-fm-border'
+      }`}
     >
       <div className="flex items-center justify-between mb-5">
-        <h3 className="text-base font-semibold text-fm-text">Cuenta Capital.com</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-base font-semibold text-fm-text">Capital.com</h3>
+          <EnvBadge env={env} />
+        </div>
         <ConnectionBadge connected={account.connected} />
       </div>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -127,7 +178,8 @@ function PositionCard({ position }) {
   );
 }
 
-function PositionsSection({ positions, isLoading }) {
+function PositionsSection({ env }) {
+  const { data: positions, isLoading } = useBrokerPositions(env);
   if (isLoading) {
     return (
       <div className="bg-fm-surface border border-fm-border shadow-fm-sm rounded-xl p-6 animate-pulse">
@@ -148,10 +200,13 @@ function PositionsSection({ positions, isLoading }) {
       transition={{ delay: 0.05 }}
       className="bg-fm-surface border border-fm-border shadow-fm-sm rounded-xl p-6"
     >
-      <h3 className="text-base font-semibold text-fm-text mb-4">
-        Posiciones abiertas{' '}
-        <span className="text-fm-text-dim font-normal">({positions?.length || 0})</span>
-      </h3>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-base font-semibold text-fm-text">
+          Posiciones abiertas{' '}
+          <span className="text-fm-text-dim font-normal">({positions?.length || 0})</span>
+        </h3>
+        <EnvBadge env={env} />
+      </div>
       {!positions || positions.length === 0 ? (
         <div className="text-center py-10">
           <SignalIcon className="w-10 h-10 text-fm-text-dim/50 mx-auto mb-2" />
@@ -227,27 +282,59 @@ function SyncSection({ syncData, isLoading, onSync, isSyncing }) {
               </p>
             </div>
           </div>
-          {syncData.discrepancies?.length > 0 && (
-            <div className="space-y-1">
-              <p className="text-xs text-fm-warning font-medium">Discrepancias:</p>
-              {syncData.discrepancies.map((d, i) => (
-                <div
-                  key={i}
-                  className="bg-fm-warning-soft border border-fm-warning/20 rounded-lg p-2"
-                >
-                  <p className="text-xs text-fm-warning">{d.sync_type}</p>
-                  <p className="text-xs text-fm-text-dim">
-                    Local: {d.local_value} | Broker: {d.broker_value}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       ) : (
         <p className="text-sm text-fm-text-dim text-center py-4">Sin datos de sincronización</p>
       )}
     </motion.div>
+  );
+}
+
+export function BrokerPage() {
+  const { data: envs } = useBrokerEnvironments();
+  const { data: syncData, isLoading: loadingSync } = useBrokerSync();
+  const { data: marketData, isLoading: loadingMarket } = useAllMarketStates();
+  const syncMutation = useForceBrokerSync();
+
+  const demoConfigured = envs?.environments?.find((e) => e.environment === 'DEMO')?.configured ?? true;
+  const liveConfigured = envs?.environments?.find((e) => e.environment === 'LIVE')?.configured ?? false;
+
+  return (
+    <>
+      <PageHeader
+        title="Broker"
+        description={
+          liveConfigured
+            ? 'Ambas cuentas activas: DEMO ($11K) y REAL ($100 — solo S1). Operan en paralelo.'
+            : 'Cuenta DEMO activa. Configura CAPITAL_*_LIVE en Railway para activar LIVE.'
+        }
+      />
+
+      <div className="space-y-5">
+        {/* Cuentas side-by-side */}
+        <div className={`grid gap-5 ${liveConfigured ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
+          {demoConfigured && <AccountCard env="DEMO" />}
+          {liveConfigured && <AccountCard env="LIVE" />}
+        </div>
+
+        {/* Posiciones y sync por environment */}
+        <div className={`grid gap-5 ${liveConfigured ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1 lg:grid-cols-2'}`}>
+          {demoConfigured && <PositionsSection env="DEMO" />}
+          {liveConfigured && <PositionsSection env="LIVE" />}
+          {!liveConfigured && (
+            <SyncSection
+              syncData={syncData}
+              isLoading={loadingSync}
+              onSync={() => syncMutation.mutate()}
+              isSyncing={syncMutation.isPending}
+            />
+          )}
+        </div>
+
+        {/* Market state (compartido entre envs) */}
+        <MarketStateSection marketData={marketData} isLoading={loadingMarket} />
+      </div>
+    </>
   );
 }
 
@@ -302,16 +389,14 @@ function MarketStateSection({ marketData, isLoading }) {
         <div className="text-center py-10">
           <SignalIcon className="w-10 h-10 text-fm-text-dim/50 mx-auto mb-2" />
           <p className="text-sm text-fm-text-dim">
-            {marketData.market_open
-              ? 'Cargando datos...'
-              : 'Mercado cerrado — sin datos en tiempo real'}
+            {marketData.market_open ? 'Cargando datos...' : 'Mercado cerrado — sin datos'}
           </p>
         </div>
       ) : (
         <div className="space-y-3">
           {marketData.instruments.map((inst) => (
             <div key={inst.instrument} className="bg-fm-surface-2 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-semibold text-fm-text">
                     {inst.instrument.replace('_', '/')}
@@ -326,125 +411,10 @@ function MarketStateSection({ marketData, isLoading }) {
                 </div>
                 <span className="text-sm font-mono tabular-nums text-fm-text">{inst.price}</span>
               </div>
-
-              <div className="grid grid-cols-3 gap-2 mb-3 text-xs">
-                <div>
-                  <span className="text-fm-text-dim">SMA200 </span>
-                  <span
-                    className={`font-medium ${
-                      inst.price_vs_sma200 === 'ABOVE' ? 'text-fm-success' : 'text-fm-danger'
-                    }`}
-                  >
-                    {inst.price_vs_sma200}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-fm-text-dim">MA </span>
-                  <span
-                    className={`font-medium ${
-                      inst.ma_state === 'WIDE'
-                        ? 'text-fm-success'
-                        : inst.ma_state === 'NARROW'
-                        ? 'text-fm-warning'
-                        : 'text-fm-text-2'
-                    }`}
-                  >
-                    {inst.ma_state}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-fm-text-dim">Trampa </span>
-                  <span
-                    className={`font-medium ${inst.trap_zone ? 'text-fm-danger' : 'text-fm-success'}`}
-                  >
-                    {inst.trap_zone ? 'Sí' : 'No'}
-                  </span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <p className="text-[11px] text-fm-text-dim mb-1">Filtros LONG</p>
-                  <div className="flex flex-wrap gap-1">
-                    {inst.filters_long?.map((f) => (
-                      <span
-                        key={f.name}
-                        className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
-                          f.passed
-                            ? 'bg-fm-success-soft text-fm-success'
-                            : 'bg-fm-danger-soft text-fm-danger'
-                        }`}
-                        title={f.name}
-                      >
-                        {f.passed ? '✓' : '✗'}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <p className="text-[11px] text-fm-text-dim mb-1">Filtros SHORT</p>
-                  <div className="flex flex-wrap gap-1">
-                    {inst.filters_short?.map((f) => (
-                      <span
-                        key={f.name}
-                        className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
-                          f.passed
-                            ? 'bg-fm-success-soft text-fm-success'
-                            : 'bg-fm-danger-soft text-fm-danger'
-                        }`}
-                        title={f.name}
-                      >
-                        {f.passed ? '✓' : '✗'}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
             </div>
           ))}
         </div>
       )}
     </motion.div>
-  );
-}
-
-export function BrokerPage() {
-  const { data: account, isLoading: loadingAccount } = useBrokerAccount();
-  const { data: positions, isLoading: loadingPositions } = useBrokerPositions();
-  const { data: syncData, isLoading: loadingSync } = useBrokerSync();
-  const { data: marketData, isLoading: loadingMarket } = useAllMarketStates();
-  const { data: envData } = useBrokerEnvironment();
-  const syncMutation = useForceBrokerSync();
-
-  const isLive = envData?.environment === 'LIVE';
-
-  return (
-    <>
-      <PageHeader
-        title="Broker"
-        description={
-          isLive
-            ? 'Operando con cuenta REAL de Capital.com. Solo S1 ejecuta trades.'
-            : 'Operando con cuenta DEMO. Todas las estrategias activas.'
-        }
-        actions={<AccountSelector />}
-      />
-
-      <div className="space-y-5">
-        <AccountCard account={account} isLoading={loadingAccount} />
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <PositionsSection positions={positions} isLoading={loadingPositions} />
-          <SyncSection
-            syncData={syncData}
-            isLoading={loadingSync}
-            onSync={() => syncMutation.mutate()}
-            isSyncing={syncMutation.isPending}
-          />
-        </div>
-
-        <MarketStateSection marketData={marketData} isLoading={loadingMarket} />
-      </div>
-    </>
   );
 }

@@ -48,6 +48,27 @@ async def lifespan(app: FastAPI):
             # AgentState: stepped compound interest
             "ALTER TABLE agent_state ADD COLUMN IF NOT EXISTS base_capital_usd FLOAT",
             "ALTER TABLE agent_state ADD COLUMN IF NOT EXISTS next_threshold_usd FLOAT",
+            # Dual environment (DEMO + LIVE en paralelo) — columna environment + índices
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS environment VARCHAR(8) NOT NULL DEFAULT 'DEMO'",
+            "CREATE INDEX IF NOT EXISTS ix_trades_environment ON trades(environment)",
+            "ALTER TABLE signals ADD COLUMN IF NOT EXISTS environment VARCHAR(8) NOT NULL DEFAULT 'DEMO'",
+            "CREATE INDEX IF NOT EXISTS ix_signals_environment ON signals(environment)",
+            "ALTER TABLE agent_state ADD COLUMN IF NOT EXISTS environment VARCHAR(8) NOT NULL DEFAULT 'DEMO'",
+            "CREATE INDEX IF NOT EXISTS ix_agent_state_environment ON agent_state(environment)",
+            "ALTER TABLE bitacora ADD COLUMN IF NOT EXISTS environment VARCHAR(8) NOT NULL DEFAULT 'DEMO'",
+            "CREATE INDEX IF NOT EXISTS ix_bitacora_environment ON bitacora(environment)",
+            "ALTER TABLE broker_sync_logs ADD COLUMN IF NOT EXISTS environment VARCHAR(8) NOT NULL DEFAULT 'DEMO'",
+            "CREATE INDEX IF NOT EXISTS ix_broker_sync_logs_environment ON broker_sync_logs(environment)",
+            "ALTER TABLE learning_logs ADD COLUMN IF NOT EXISTS environment VARCHAR(8) NOT NULL DEFAULT 'DEMO'",
+            "CREATE INDEX IF NOT EXISTS ix_learning_logs_environment ON learning_logs(environment)",
+            "ALTER TABLE learning_reports ADD COLUMN IF NOT EXISTS environment VARCHAR(8) NOT NULL DEFAULT 'DEMO'",
+            "CREATE INDEX IF NOT EXISTS ix_learning_reports_environment ON learning_reports(environment)",
+            "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS environment VARCHAR(8) NOT NULL DEFAULT 'DEMO'",
+            "CREATE INDEX IF NOT EXISTS ix_signal_outcomes_environment ON signal_outcomes(environment)",
+            "ALTER TABLE improvement_cycles ADD COLUMN IF NOT EXISTS environment VARCHAR(8) NOT NULL DEFAULT 'DEMO'",
+            "CREATE INDEX IF NOT EXISTS ix_improvement_cycles_environment ON improvement_cycles(environment)",
+            "ALTER TABLE improvement_rules ADD COLUMN IF NOT EXISTS environment VARCHAR(8) NOT NULL DEFAULT 'DEMO'",
+            "CREATE INDEX IF NOT EXISTS ix_improvement_rules_environment ON improvement_rules(environment)",
         ]
         for sql in migrations:
             try:
@@ -91,6 +112,31 @@ async def lifespan(app: FastAPI):
                 log.exception("Error sembrando %s", sid)
 
     log.info("Tablas verificadas/creadas")
+
+    # Bootstrap AgentState LIVE para estrategias habilitadas (dual-mode)
+    # Si hay credenciales LIVE configuradas, crear AgentState(env=LIVE) para las
+    # estrategias whitelist (por ahora solo s1_pullback_20_up).
+    try:
+        from app.strategies.registry import STRATEGIES_ENABLED_IN_LIVE
+        from sqlalchemy import text as _text
+        if settings.capital_api_key_live and settings.capital_identifier_live:
+            async with engine.begin() as conn:
+                for sid in STRATEGIES_ENABLED_IN_LIVE:
+                    r = await conn.execute(
+                        _text("SELECT 1 FROM agent_state WHERE strategy_id = :sid AND environment = 'LIVE'"),
+                        {"sid": sid},
+                    )
+                    if r.first() is None:
+                        config = STRATEGIES.get(sid)
+                        initial = config.initial_capital_usd if config else 100.0
+                        await conn.execute(_text(
+                            "INSERT INTO agent_state "
+                            "(strategy_id, environment, mode, capital_usd, peak_capital_usd, base_capital_usd) "
+                            "VALUES (:sid, 'LIVE', 'LIVE', :cap, :cap, :cap)"
+                        ), {"sid": sid, "cap": initial})
+                        log.info("Bootstrap AgentState LIVE: %s (capital=$%.2f)", sid, initial)
+    except Exception:
+        log.exception("Error en bootstrap AgentState LIVE")
 
     # Legacy seeding (DB vacía — primera ejecución)
     async with async_session_factory() as session:

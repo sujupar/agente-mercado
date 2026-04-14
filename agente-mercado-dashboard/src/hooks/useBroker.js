@@ -1,11 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/endpoints';
+import { useDashboardContext } from '../context/DashboardContext';
 
-export function useBrokerAccount() {
+export function useBrokerAccount(environment) {
+  // Si se pasa environment explícito, usarlo (BrokerPage lo usa para mostrar DEMO+LIVE).
+  // Si no, usar el activeEnvironment del context.
+  const { activeEnvironment } = useDashboardContext();
+  const env = environment || activeEnvironment;
   return useQuery({
-    queryKey: ['brokerAccount'],
+    queryKey: ['brokerAccount', env],
     queryFn: async () => {
-      const response = await api.getBrokerAccount();
+      const response = await api.getBrokerAccount(env);
       return response.data;
     },
     refetchInterval: 10000,
@@ -14,11 +19,13 @@ export function useBrokerAccount() {
   });
 }
 
-export function useBrokerPositions() {
+export function useBrokerPositions(environment) {
+  const { activeEnvironment } = useDashboardContext();
+  const env = environment || activeEnvironment;
   return useQuery({
-    queryKey: ['brokerPositions'],
+    queryKey: ['brokerPositions', env],
     queryFn: async () => {
-      const response = await api.getBrokerPositions();
+      const response = await api.getBrokerPositions(env);
       return response.data;
     },
     refetchInterval: 10000,

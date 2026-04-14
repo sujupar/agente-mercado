@@ -4,18 +4,37 @@
  * Provee:
  * - globalFromDate, globalToDate: fechas del filtro global (default HOY)
  * - setGlobalDate: setter que actualiza ambas fechas
- * - accountType: "DEMO" | "LIVE" (derivado del backend)
+ * - activeEnvironment: "DEMO" | "LIVE" — qué environment mostrar en dashboard
+ * - setActiveEnvironment: cambiar environment visible
  */
 
-import { createContext, useContext, useState, useMemo } from 'react';
+import { createContext, useContext, useState, useMemo, useEffect } from 'react';
 import { getTodayRange } from '../components/DateFilter';
 
 const DashboardContext = createContext(null);
+
+const ENV_KEY = 'agente.active-environment';
 
 export function DashboardProvider({ children }) {
   const todayRange = getTodayRange();
   const [globalFromDate, setGlobalFromDate] = useState(todayRange.from);
   const [globalToDate, setGlobalToDate] = useState(todayRange.to);
+  const [activeEnvironment, setActiveEnvironmentState] = useState(() => {
+    if (typeof window === 'undefined') return 'DEMO';
+    try {
+      return window.localStorage.getItem(ENV_KEY) || 'DEMO';
+    } catch {
+      return 'DEMO';
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ENV_KEY, activeEnvironment);
+    } catch {
+      // noop
+    }
+  }, [activeEnvironment]);
 
   const value = useMemo(
     () => ({
@@ -25,8 +44,15 @@ export function DashboardProvider({ children }) {
         setGlobalFromDate(from);
         setGlobalToDate(to);
       },
+      activeEnvironment,
+      setActiveEnvironment: (env) => {
+        const normalized = (env || 'DEMO').toUpperCase();
+        if (normalized === 'DEMO' || normalized === 'LIVE') {
+          setActiveEnvironmentState(normalized);
+        }
+      },
     }),
-    [globalFromDate, globalToDate],
+    [globalFromDate, globalToDate, activeEnvironment],
   );
 
   return (

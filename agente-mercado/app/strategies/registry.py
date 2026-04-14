@@ -219,3 +219,14 @@ STRATEGIES: dict[str, StrategyConfig] = {
         trades_per_improvement_cycle=20,
     ),
 }
+
+
+# Estrategias habilitadas para operar en LIVE (cuenta real).
+# Las estrategias NO listadas aquí siguen operando en DEMO pero nunca ejecutan
+# trades con dinero real — sirven como laboratorio y motor de aprendizaje.
+#
+# Criterio para incluir: win rate estable ≥40% tras ≥100 trades en DEMO.
+# Por ahora solo S1 Pullback EMA20 está validada para LIVE con $100.
+STRATEGIES_ENABLED_IN_LIVE: frozenset[str] = frozenset({
+    "s1_pullback_20_up",
+})

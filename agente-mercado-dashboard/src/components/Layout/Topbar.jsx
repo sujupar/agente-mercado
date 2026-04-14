@@ -1,15 +1,18 @@
 /**
- * Topbar — barra superior simplificada estilo fintech.
- * Contiene: breadcrumb (título tab actual), balance y mode badge (display-only).
- * NO incluye AccountSelector ni DateFilter (esos viven en PageHeader).
+ * Topbar — barra superior simplificada estilo fintech con selector DEMO/LIVE.
+ * NO duplica AccountSelector ni DateFilter (viven en cada PageHeader).
  */
 
 import { TABS } from './navConfig';
+import { EnvironmentSelector } from './EnvironmentSelector';
+import { useDashboardContext } from '../../context/DashboardContext';
 
 const TAB_NAMES = Object.fromEntries(TABS.map((t) => [t.id, t.label]));
 
-export function Topbar({ agentData, mode, activeTab }) {
+export function Topbar({ agentData, activeTab }) {
+  const { activeEnvironment } = useDashboardContext();
   const tabName = TAB_NAMES[activeTab] || '';
+  const isLive = activeEnvironment === 'LIVE';
 
   return (
     <header className="sticky top-0 z-30 bg-fm-surface/85 backdrop-blur-xl border-b border-fm-border">
@@ -24,37 +27,22 @@ export function Topbar({ agentData, mode, activeTab }) {
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Balance */}
-        <div className="text-right">
-          <div className="text-[11px] text-fm-text-dim leading-tight">Balance</div>
-          <div className="text-sm font-semibold text-fm-text font-mono tabular-nums">
+        {/* Environment Selector (DEMO / LIVE visualización) */}
+        <EnvironmentSelector />
+
+        {/* Balance del env activo */}
+        <div className="text-right hidden sm:block">
+          <div className="text-[11px] text-fm-text-dim leading-tight">
+            Balance {isLive ? 'REAL' : 'DEMO'}
+          </div>
+          <div
+            className={`text-sm font-semibold font-mono tabular-nums ${
+              isLive ? 'text-fm-danger' : 'text-fm-text'
+            }`}
+          >
             ${agentData?.capital_usd?.toFixed(2) || '0.00'}
           </div>
         </div>
-
-        {/* Mode badge (display-only) */}
-        <span
-          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold ${
-            mode === 'LIVE'
-              ? 'bg-fm-danger-soft text-fm-danger'
-              : mode === 'SIMULATION'
-              ? 'bg-fm-primary-soft text-fm-primary'
-              : mode === 'SHUTDOWN'
-              ? 'bg-fm-danger-soft text-fm-danger'
-              : 'bg-fm-surface-2 text-fm-text-dim'
-          }`}
-        >
-          <span
-            className={`w-1.5 h-1.5 rounded-full ${
-              mode === 'LIVE'
-                ? 'bg-fm-danger animate-pulse'
-                : mode === 'SIMULATION'
-                ? 'bg-fm-primary animate-pulse'
-                : 'bg-fm-text-dim'
-            }`}
-          />
-          {mode || 'UNKNOWN'}
-        </span>
       </div>
     </header>
   );

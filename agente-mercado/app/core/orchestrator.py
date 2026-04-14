@@ -55,8 +55,9 @@ class ForexOrchestrator:
     # Máximo tiempo (seg) antes de forzar refresco de contexto
     _CONTEXT_MAX_AGE_SEC = 60 * 60  # 1 hora
 
-    def __init__(self, broker: BrokerInterface) -> None:
+    def __init__(self, broker: BrokerInterface, environment: str = "DEMO") -> None:
         self._broker = broker
+        self._environment = environment.upper()  # "DEMO" | "LIVE"
         self._llm = GeminiClient()
         self._notifier = TelegramNotifier()
         self._instruments = settings.instruments_list
@@ -114,10 +115,14 @@ class ForexOrchestrator:
 
         try:
             async with async_session_factory() as session:
-                states = await session.execute(select(AgentState))
+                # Solo actualizamos los AgentState de NUESTRO environment
+                # (DEMO y LIVE son cuentas separadas con balances diferentes)
+                states = await session.execute(
+                    select(AgentState).where(AgentState.environment == self._environment)
+                )
                 all_states = list(states.scalars().all())
                 if not all_states:
-                    log.debug("No hay AgentState para sincronizar")
+                    log.debug("No hay AgentState env=%s para sincronizar", self._environment)
                     return
 
                 equity = account.balance + account.unrealized_pnl
@@ -128,11 +133,11 @@ class ForexOrchestrator:
                 await session.commit()
 
             log.info(
-                "Broker sync: balance=$%.2f equity=$%.2f upl=$%.2f",
-                account.balance, equity, account.unrealized_pnl,
+                "Broker sync [%s]: balance=$%.2f equity=$%.2f upl=$%.2f",
+                self._environment, account.balance, equity, account.unrealized_pnl,
             )
         except Exception:
-            log.exception("Error guardando broker sync")
+            log.exception("Error guardando broker sync env=%s", self._environment)
 
     # ── Fase 1: Contexto H1/H4 (cada 15 min) ──────────────────
 
@@ -257,12 +262,10 @@ class ForexOrchestrator:
                             self._entry_candle_cache["H4"] = candle_cache[tf]
                             self._entry_candle_cache_at = now
 
-                # Leer environment actual para aplicar política LIVE
-                # En LIVE: solo S1 ejecuta trades; las demás generan señales
-                # pero NO ejecutan (protección del capital real).
-                from app.core.scheduler import get_current_environment
-                current_env = await get_current_environment()
-                is_live = current_env.upper() == "LIVE"
+                # En LIVE: solo estrategias en STRATEGIES_ENABLED_IN_LIVE operan.
+                # En DEMO: todas operan para que el motor de mejora aprenda.
+                is_live = self._environment == "LIVE"
+                from app.strategies.registry import STRATEGIES_ENABLED_IN_LIVE
 
                 # Buscar entradas para cada estrategia
                 total_trades = 0
@@ -270,10 +273,10 @@ class ForexOrchestrator:
                     if not config.enabled:
                         continue
 
-                    # Política LIVE: solo S1 opera en cuenta real
-                    if is_live and strategy_id != "s1_pullback_20_up":
+                    # Política LIVE: solo estrategias en whitelist ejecutan trades
+                    if is_live and strategy_id not in STRATEGIES_ENABLED_IN_LIVE:
                         log.debug(
-                            "[%s] Skip en LIVE: solo s1_pullback_20_up ejecuta en cuenta real",
+                            "[%s] Skip en LIVE: no está en STRATEGIES_ENABLED_IN_LIVE",
                             strategy_id,
                         )
                         continue
@@ -608,6 +611,7 @@ class ForexOrchestrator:
         open_count_result = await session.execute(
             select(func.count(Trade.id)).where(
                 Trade.strategy_id == strategy_id,
+                Trade.environment == self._environment,
                 Trade.status == "OPEN",
             )
         )
@@ -615,17 +619,16 @@ class ForexOrchestrator:
 
         # Circuit breaker LIVE: en cuenta real S1 solo puede tener 1 posición abierta
         # (vs 3 en demo) para proteger el capital de $100.
-        from app.core.scheduler import get_current_environment
-        current_env = await get_current_environment()
+        is_live = self._environment == "LIVE"
         max_concurrent = strategy_config.max_concurrent_positions
-        if current_env.upper() == "LIVE" and strategy_id == "s1_pullback_20_up":
+        if is_live and strategy_id == "s1_pullback_20_up":
             max_concurrent = 1
 
         if strategy_open_count >= max_concurrent:
             log.info(
                 "[%s] Máximo por estrategia alcanzado (%d/%d)%s",
                 strategy_id, strategy_open_count, max_concurrent,
-                " [LIVE]" if current_env.upper() == "LIVE" else "",
+                " [LIVE]" if is_live else "",
             )
             return False
 
@@ -711,6 +714,7 @@ class ForexOrchestrator:
         # 6. Registrar señal en DB
         db_signal = Signal(
             strategy_id=strategy_id,
+            environment=self._environment,
             market_id=f"oanda:{signal.instrument}",
             symbol=signal.instrument,
             estimated_value=0,
@@ -764,6 +768,7 @@ class ForexOrchestrator:
         # 8. Registrar trade en DB
         trade = Trade(
             strategy_id=strategy_id,
+            environment=self._environment,
             signal_id=db_signal.id,
             market_id=f"oanda:{signal.instrument}",
             symbol=signal.instrument,
@@ -801,6 +806,7 @@ class ForexOrchestrator:
         bitacora = Bitacora(
             trade_id=trade.id,
             strategy_id=strategy_id,
+            environment=self._environment,
             symbol=signal.instrument,
             direction=trade.direction,
             entry_reasoning=(
@@ -862,9 +868,13 @@ class ForexOrchestrator:
             log.exception("Error obteniendo posiciones del broker")
             return
 
-        # Obtener trades abiertos de la DB
+        # Obtener trades abiertos de la DB (solo del environment actual)
         result = await session.execute(
-            select(Trade).where(Trade.status == "OPEN", Trade.broker_trade_id.isnot(None))
+            select(Trade).where(
+                Trade.status == "OPEN",
+                Trade.broker_trade_id.isnot(None),
+                Trade.environment == self._environment,
+            )
         )
         db_trades = {t.broker_trade_id: t for t in result.scalars().all()}
 
@@ -1146,6 +1156,7 @@ class ForexOrchestrator:
             select(Trade).where(
                 Trade.broker_trade_id == position.trade_id,
                 Trade.status == "OPEN",
+                Trade.environment == self._environment,
             )
         )
         existing = result.scalar_one_or_none()
@@ -1153,14 +1164,12 @@ class ForexOrchestrator:
             return existing
 
         # Paso 2: Check por tupla (instrument, direction, entry_price ± 0.0001)
-        # Esto captura el caso donde el broker cambia el dealId pero es
-        # la misma posición lógica. Tolerancia 0.0001 = 1 pip en forex mayor.
-        # Usa .first() porque puede haber múltiples duplicados de la DB vieja.
         result = await session.execute(
             select(Trade).where(
                 Trade.instrument == position.instrument,
                 Trade.direction == direction_db,
                 Trade.status == "OPEN",
+                Trade.environment == self._environment,
                 func.abs(Trade.entry_price - position.entry_price) < 0.0001,
             ).order_by(Trade.created_at.desc()).limit(1)
         )
@@ -1189,6 +1198,7 @@ class ForexOrchestrator:
 
         trade = Trade(
             strategy_id=strategy_id,
+            environment=self._environment,
             market_id=f"capital:{position.instrument}",
             symbol=position.instrument,
             instrument=position.instrument,
@@ -1252,9 +1262,12 @@ class ForexOrchestrator:
             log.exception("[%s] Error en sistema de aprendizaje", strategy_id)
 
     async def _ensure_state(self, session: AsyncSession, strategy_id: str) -> AgentState:
-        """Obtiene o crea AgentState para una estrategia."""
+        """Obtiene o crea AgentState para una estrategia en el environment actual."""
         result = await session.execute(
-            select(AgentState).where(AgentState.strategy_id == strategy_id)
+            select(AgentState).where(
+                AgentState.strategy_id == strategy_id,
+                AgentState.environment == self._environment,
+            )
         )
         state = result.scalar_one_or_none()
         if not state:
@@ -1262,7 +1275,8 @@ class ForexOrchestrator:
             initial = config.initial_capital_usd if config else 100_000.0
             state = AgentState(
                 strategy_id=strategy_id,
-                mode="SIMULATION" if settings.oanda_environment == "practice" else "LIVE",
+                environment=self._environment,
+                mode="LIVE" if self._environment == "LIVE" else "SIMULATION",
                 capital_usd=initial,
                 peak_capital_usd=initial,
             )

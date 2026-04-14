@@ -30,13 +30,18 @@ class Settings(BaseSettings):
         default="capital", description="'capital' (Capital.com) o 'oanda'"
     )
 
-    # Capital.com
+    # Capital.com — DEMO (existente)
     capital_api_key: str = Field(default="")
-    capital_identifier: str = Field(default="", description="Email de login Capital.com")
+    capital_identifier: str = Field(default="", description="Email de login Capital.com DEMO")
     capital_password: str = Field(default="")
     capital_environment: str = Field(
-        default="DEMO", description="'DEMO' o 'LIVE'"
+        default="DEMO", description="[Legacy] 'DEMO' o 'LIVE'. En dual-mode, ignorado."
     )
+
+    # Capital.com — LIVE (paralelo al DEMO, opcional)
+    capital_api_key_live: str = Field(default="")
+    capital_identifier_live: str = Field(default="", description="Email de login Capital.com LIVE")
+    capital_password_live: str = Field(default="")
 
     # OANDA (legacy)
     oanda_account_id: str = Field(default="")

@@ -30,9 +30,11 @@ export const api = {
 
   /**
    * Estado completo del agente
+   * @param {string} environment - "DEMO" | "LIVE"
    * @returns {Promise} Objeto con capital, P&L, posiciones, etc.
    */
-  status: () => apiClient.get('/status'),
+  status: (environment = 'DEMO') =>
+    apiClient.get('/status', { params: { environment } }),
 
   /**
    * Régimen macro actual (LLM overlay)
@@ -77,7 +79,8 @@ export const api = {
    * @param {Number} limit - Cantidad máxima de señales a retornar
    * @returns {Promise} Array de señales
    */
-  getSignals: (limit = 50) => apiClient.get('/signals', { params: { limit } }),
+  getSignals: (limit = 50, environment = 'DEMO') =>
+    apiClient.get('/signals', { params: { limit, environment } }),
 
   // ==========================================
   // P&L HISTÓRICO
@@ -164,8 +167,10 @@ export const api = {
   getStrategies: (params = {}) => apiClient.get('/strategies', { params }),
   getStrategyTrades: (strategyId, params = {}) =>
     apiClient.get(`/strategies/${strategyId}/trades`, { params }),
-  getStrategyBitacora: (strategyId, limit = 50) =>
-    apiClient.get(`/strategies/${strategyId}/bitacora`, { params: { limit } }),
+  getStrategyBitacora: (strategyId, limit = 50, environment = 'DEMO') =>
+    apiClient.get(`/strategies/${strategyId}/bitacora`, {
+      params: { limit, environment },
+    }),
   getStrategyReports: (strategyId, limit = 20) =>
     apiClient.get(`/strategies/${strategyId}/reports`, { params: { limit } }),
   getStrategyPerformance: (strategyId) =>
@@ -190,8 +195,10 @@ export const api = {
   // BROKER (Capital.com)
   // ==========================================
 
-  getBrokerAccount: () => apiClient.get('/broker/account'),
-  getBrokerPositions: () => apiClient.get('/broker/positions'),
+  getBrokerAccount: (environment = 'DEMO') =>
+    apiClient.get('/broker/account', { params: { environment } }),
+  getBrokerPositions: (environment = 'DEMO') =>
+    apiClient.get('/broker/positions', { params: { environment } }),
 
   /**
    * Obtener environment actual del broker (DEMO/LIVE).

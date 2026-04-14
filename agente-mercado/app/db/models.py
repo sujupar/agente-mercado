@@ -64,6 +64,7 @@ class Signal(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     strategy_id: Mapped[str] = mapped_column(String(32), index=True, default="momentum")
+    environment: Mapped[str] = mapped_column(String(8), index=True, default="DEMO")
     market_id: Mapped[str] = mapped_column(String(256), index=True)
     symbol: Mapped[str] = mapped_column(String(32))
     estimated_value: Mapped[float] = mapped_column(Float)
@@ -89,6 +90,7 @@ class Trade(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     strategy_id: Mapped[str] = mapped_column(String(32), index=True, default="momentum")
+    environment: Mapped[str] = mapped_column(String(8), index=True, default="DEMO")
     signal_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     market_id: Mapped[str] = mapped_column(String(256), index=True)
     symbol: Mapped[str] = mapped_column(String(32))
@@ -151,6 +153,7 @@ class AgentState(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     strategy_id: Mapped[str] = mapped_column(String(32), index=True, default="momentum")
+    environment: Mapped[str] = mapped_column(String(8), index=True, default="DEMO")
     mode: Mapped[str] = mapped_column(String(16), default="SIMULATION")
     capital_usd: Mapped[float] = mapped_column(Float, default=50.0)
     peak_capital_usd: Mapped[float] = mapped_column(Float, default=50.0)
@@ -191,6 +194,7 @@ class BrokerSyncLog(Base):
     __tablename__ = "broker_sync_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    environment: Mapped[str] = mapped_column(String(8), index=True, default="DEMO")
     sync_type: Mapped[str] = mapped_column(String(32))  # "manual_sync" | "trade_closed_externally" | "trade_missing_locally"
     local_value: Mapped[str] = mapped_column(Text)
     broker_value: Mapped[str] = mapped_column(Text)
@@ -226,6 +230,7 @@ class SignalOutcome(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     strategy_id: Mapped[str] = mapped_column(String(32), index=True, default="momentum")
+    environment: Mapped[str] = mapped_column(String(8), index=True, default="DEMO")
     signal_id: Mapped[int] = mapped_column(Integer, index=True)
     trade_id: Mapped[int] = mapped_column(Integer, index=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True)
@@ -253,6 +258,7 @@ class LearningLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     strategy_id: Mapped[str] = mapped_column(String(32), index=True, default="momentum")
+    environment: Mapped[str] = mapped_column(String(8), index=True, default="DEMO")
     adjustment_type: Mapped[str] = mapped_column(String(32))
     parameter: Mapped[str] = mapped_column(String(64))
     old_value: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -272,6 +278,7 @@ class Bitacora(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     trade_id: Mapped[int] = mapped_column(Integer, index=True)
     strategy_id: Mapped[str] = mapped_column(String(32), index=True)
+    environment: Mapped[str] = mapped_column(String(8), index=True, default="DEMO")
     symbol: Mapped[str] = mapped_column(String(32))
     direction: Mapped[str] = mapped_column(String(16))
 
@@ -303,6 +310,7 @@ class LearningReport(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     strategy_id: Mapped[str] = mapped_column(String(32), index=True)
+    environment: Mapped[str] = mapped_column(String(8), index=True, default="DEMO")
     report_number: Mapped[int] = mapped_column(Integer)
     trades_analyzed: Mapped[int] = mapped_column(Integer)
 
@@ -326,6 +334,7 @@ class ImprovementCycle(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     strategy_id: Mapped[str] = mapped_column(String(32), index=True)
+    environment: Mapped[str] = mapped_column(String(8), index=True, default="DEMO")
     cycle_number: Mapped[int] = mapped_column(Integer)
     trades_in_cycle: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(
@@ -351,6 +360,7 @@ class ImprovementRule(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     strategy_id: Mapped[str] = mapped_column(String(32), index=True)
+    environment: Mapped[str] = mapped_column(String(8), index=True, default="DEMO")
     cycle_number: Mapped[int] = mapped_column(Integer)
     rule_type: Mapped[str] = mapped_column(String(32))  # time_filter, pattern_filter, etc.
 
