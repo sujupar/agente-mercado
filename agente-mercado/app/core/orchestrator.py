@@ -262,23 +262,17 @@ class ForexOrchestrator:
                             self._entry_candle_cache["H4"] = candle_cache[tf]
                             self._entry_candle_cache_at = now
 
-                # En LIVE: solo estrategias en STRATEGIES_ENABLED_IN_LIVE operan.
-                # En DEMO: todas operan para que el motor de mejora aprenda.
-                is_live = self._environment == "LIVE"
-                from app.strategies.registry import STRATEGIES_ENABLED_IN_LIVE
+                # LIVE y DEMO operan todas las estrategias por igual.
+                # La única diferencia entre ambos entornos es el capital:
+                # - DEMO usa el balance del broker demo (~$11K)
+                # - LIVE usa el balance del broker real ($100)
+                # El position sizing es proporcional al balance, así que el
+                # riesgo absoluto en LIVE es ~110x menor (1% de $100 vs 1% de $11K).
 
                 # Buscar entradas para cada estrategia
                 total_trades = 0
                 for strategy_id, config in STRATEGIES.items():
                     if not config.enabled:
-                        continue
-
-                    # Política LIVE: solo estrategias en whitelist ejecutan trades
-                    if is_live and strategy_id not in STRATEGIES_ENABLED_IN_LIVE:
-                        log.debug(
-                            "[%s] Skip en LIVE: no está en STRATEGIES_ENABLED_IN_LIVE",
-                            strategy_id,
-                        )
                         continue
 
                     # Check daily trade limit
@@ -617,18 +611,14 @@ class ForexOrchestrator:
         )
         strategy_open_count = open_count_result.scalar() or 0
 
-        # Circuit breaker LIVE: en cuenta real S1 solo puede tener 1 posición abierta
-        # (vs 3 en demo) para proteger el capital de $100.
-        is_live = self._environment == "LIVE"
+        # LIVE y DEMO usan los mismos límites — el capital menor en LIVE
+        # ya limita naturalmente el riesgo vía position sizing (1% de $100 = $1).
         max_concurrent = strategy_config.max_concurrent_positions
-        if is_live and strategy_id == "s1_pullback_20_up":
-            max_concurrent = 1
 
         if strategy_open_count >= max_concurrent:
             log.info(
-                "[%s] Máximo por estrategia alcanzado (%d/%d)%s",
-                strategy_id, strategy_open_count, max_concurrent,
-                " [LIVE]" if is_live else "",
+                "[%s] Máximo por estrategia alcanzado (%d/%d) [%s]",
+                strategy_id, strategy_open_count, max_concurrent, self._environment,
             )
             return False
 
@@ -820,7 +810,7 @@ class ForexOrchestrator:
             entry_reasoning=(
                 f"Patrón {signal.pattern_type} en pullback a EMA20. "
                 f"R:R={signal.risk_reward_ratio:.1f}. "
-                f"Tendencia H1: {signal.market_state_h1.trend_state}. "
+                f"Tendencia H1: {signal.market_state_h1.trend_state if signal.market_state_h1 else 'N/A'}. "
                 f"8/8 filtros de contexto pasados."
             ),
             market_context=signal.market_state_h1.to_dict() if signal.market_state_h1 else None,

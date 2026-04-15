@@ -113,9 +113,10 @@ async def lifespan(app: FastAPI):
 
     log.info("Tablas verificadas/creadas")
 
-    # Bootstrap AgentState LIVE para estrategias habilitadas (dual-mode)
-    # Si hay credenciales LIVE configuradas, crear AgentState(env=LIVE) para las
-    # estrategias whitelist (por ahora solo s1_pullback_20_up).
+    # Bootstrap AgentState LIVE para TODAS las estrategias (dual-mode).
+    # LIVE opera igual que DEMO pero con capital real del broker ($100).
+    # El capital inicial se setea con una fracción razonable del broker balance;
+    # el sync de 5 min sobrescribirá broker_balance al valor real automáticamente.
     try:
         from app.strategies.registry import STRATEGIES_ENABLED_IN_LIVE
         from sqlalchemy import text as _text
@@ -128,7 +129,12 @@ async def lifespan(app: FastAPI):
                     )
                     if r.first() is None:
                         config = STRATEGIES.get(sid)
-                        initial = config.initial_capital_usd if config else 100.0
+                        # Capital inicial cosmético — el broker balance real lo
+                        # sobrescribe al primer sync (cada 5 min).
+                        # Usamos un valor conservador: min(config.initial, 100)
+                        # para que el sizing no sea absurdo antes del primer sync.
+                        initial_cfg = config.initial_capital_usd if config else 100.0
+                        initial = min(initial_cfg, 100.0)
                         await conn.execute(_text(
                             "INSERT INTO agent_state "
                             "(strategy_id, environment, mode, capital_usd, peak_capital_usd, base_capital_usd) "
