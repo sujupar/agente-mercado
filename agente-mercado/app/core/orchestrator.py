@@ -262,17 +262,24 @@ class ForexOrchestrator:
                             self._entry_candle_cache["H4"] = candle_cache[tf]
                             self._entry_candle_cache_at = now
 
-                # LIVE y DEMO operan todas las estrategias por igual.
-                # La única diferencia entre ambos entornos es el capital:
-                # - DEMO usa el balance del broker demo (~$11K)
-                # - LIVE usa el balance del broker real ($100)
-                # El position sizing es proporcional al balance, así que el
-                # riesgo absoluto en LIVE es ~110x menor (1% de $100 vs 1% de $11K).
+                # Política LIVE: solo estrategias validadas (STRATEGIES_ENABLED_IN_LIVE)
+                # ejecutan trades con dinero real. En DEMO todas operan normalmente
+                # como laboratorio. Las no-whitelisted en LIVE hacen skip temprano.
+                is_live = self._environment == "LIVE"
+                from app.strategies.registry import STRATEGIES_ENABLED_IN_LIVE
 
                 # Buscar entradas para cada estrategia
                 total_trades = 0
                 for strategy_id, config in STRATEGIES.items():
                     if not config.enabled:
+                        continue
+
+                    # Gate LIVE: skip estrategias no validadas en cuenta real
+                    if is_live and strategy_id not in STRATEGIES_ENABLED_IN_LIVE:
+                        log.debug(
+                            "[%s] Skip en LIVE: no está en STRATEGIES_ENABLED_IN_LIVE",
+                            strategy_id,
+                        )
                         continue
 
                     # Check daily trade limit
@@ -611,9 +618,12 @@ class ForexOrchestrator:
         )
         strategy_open_count = open_count_result.scalar() or 0
 
-        # LIVE y DEMO usan los mismos límites — el capital menor en LIVE
-        # ya limita naturalmente el riesgo vía position sizing (1% de $100 = $1).
+        # Circuit breaker LIVE: S1 en cuenta real solo puede tener 1 posición
+        # abierta (vs 3 en demo) para proteger los $100 de capital real.
+        is_live = self._environment == "LIVE"
         max_concurrent = strategy_config.max_concurrent_positions
+        if is_live and strategy_id == "s1_pullback_20_up":
+            max_concurrent = 1
 
         if strategy_open_count >= max_concurrent:
             log.info(

@@ -222,12 +222,16 @@ STRATEGIES: dict[str, StrategyConfig] = {
 
 
 # Estrategias habilitadas para operar en LIVE (cuenta real).
-# Decisión del usuario (15 abr 2026): LIVE opera TODAS las estrategias igual
-# que DEMO. La única diferencia es el capital (LIVE $100 vs DEMO $11K) que se
-# propaga vía position sizing (1% del balance). El riesgo absoluto en LIVE es
-# ~110x menor que en DEMO, lo cual es la protección natural.
 #
-# La constante se mantiene para mostrar TODAS las estrategias en el endpoint
-# /strategies?environment=LIVE. Si en el futuro quieres volver a restringir
-# a subset, reemplaza este frozenset(STRATEGIES.keys()) por las que quieras.
-STRATEGIES_ENABLED_IN_LIVE: frozenset[str] = frozenset(STRATEGIES.keys())
+# IMPORTANTE (15 abr 2026): solo S1 está validada con rendimiento consistente.
+# Las demás siguen operando SOLO en DEMO como laboratorio hasta tener
+# suficientes datos. Criterio para incluir: win rate estable ≥40% tras
+# ≥100 trades en DEMO.
+#
+# En LIVE, las estrategias NO listadas aquí:
+# - NO ejecutan trades reales
+# - NO generan señales en LIVE
+# - Siguen operando normalmente en DEMO
+STRATEGIES_ENABLED_IN_LIVE: frozenset[str] = frozenset({
+    "s1_pullback_20_up",
+})
