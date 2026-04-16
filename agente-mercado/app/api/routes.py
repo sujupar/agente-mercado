@@ -1071,6 +1071,49 @@ async def get_improvement_rules(
     ]
 
 
+@router.post("/admin/fix-adopted-trades")
+async def admin_fix_adopted_trades(
+    session: AsyncSession = Depends(get_session),
+    _user: str = Depends(verify_token),
+):
+    """Reasigna trades adoptados (pattern_name='adopted_from_broker') a
+    strategy_id='external_adopted' para no contaminar stats de S1/S2.
+
+    Bug histórico: _adopt_broker_position etiquetaba por dirección
+    (LONG→s1, SHORT→s2) aunque la posición fuera de otra estrategia
+    (ej. S3/S4/S10 LONG). Esas posiciones inflaban las métricas de S1.
+
+    Este endpoint corrige retroactivamente esos registros.
+    """
+    from app.db.models import Trade
+    from sqlalchemy import update as sql_update
+
+    # Contar antes
+    before = await session.execute(
+        select(func.count(Trade.id)).where(
+            Trade.pattern_name == "adopted_from_broker",
+            Trade.strategy_id.in_(["s1_pullback_20_up", "s2_pullback_20_down"]),
+        )
+    )
+    count_before = before.scalar() or 0
+
+    # Reasignar
+    await session.execute(
+        sql_update(Trade)
+        .where(
+            Trade.pattern_name == "adopted_from_broker",
+            Trade.strategy_id.in_(["s1_pullback_20_up", "s2_pullback_20_down"]),
+        )
+        .values(strategy_id="external_adopted")
+    )
+    await session.commit()
+
+    return {
+        "trades_reassigned": count_before,
+        "message": f"Reasignados {count_before} trades adoptados a 'external_adopted'",
+    }
+
+
 @router.post("/admin/rules/{rule_id}/toggle")
 async def admin_toggle_rule(
     rule_id: int,
@@ -1379,11 +1422,9 @@ async def force_broker_sync(
             if existing.scalar_one_or_none():
                 continue  # Ya existe, skip
 
-            # Crear Trade local
-            strategy_id = (
-                "s1_pullback_20_up" if p.direction == "LONG"
-                else "s2_pullback_20_down"
-            )
+            # Crear Trade local — NO asignar heurísticamente a s1/s2 por direction,
+            # eso inflaba stats falsas. Marcar como "external_adopted".
+            strategy_id = "external_adopted"
             direction_db = "BUY" if p.direction == "LONG" else "SELL"
             from app.forex.instruments import calculate_notional_usd
             size_usd = calculate_notional_usd(p.instrument, p.units, p.entry_price)

@@ -1197,11 +1197,17 @@ class ForexOrchestrator:
             return existing_match
 
         # Paso 3: Realmente es una posición nueva — crear Trade
-        # Determinar estrategia por dirección (heurística, mejor que nada)
-        strategy_id = (
-            "s1_pullback_20_up" if position.direction == "LONG"
-            else "s2_pullback_20_down"
-        )
+        # IMPORTANTE: NO asignar heurísticamente a s1/s2 por dirección.
+        # Eso contaminaba las métricas: trades de S3/S4/S10 LONG aparecían
+        # como si fueran de S1, inflando sus estadísticas con señales que
+        # S1 nunca generó (sus filtros H1/H4 ni siquiera pasaron).
+        #
+        # Se marca con strategy_id="external_adopted" para dejar claro que
+        # es una posición externa (manual, legacy, o de otra estrategia
+        # cuyo matching por broker_trade_id falló). Esas posiciones se
+        # muestran en el dashboard pero no entran en stats de ninguna
+        # estrategia específica.
+        strategy_id = "external_adopted"
         size_usd = calculate_notional_usd(
             position.instrument, position.units, position.entry_price,
         )
