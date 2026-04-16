@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 
 import httpx
@@ -11,6 +13,11 @@ from app.broker.base import BrokerInterface
 from app.broker.models import AccountState, BrokerPosition, Candle, OrderResult, Price
 
 log = logging.getLogger(__name__)
+
+# Rate limit de Capital.com en /session (login): ~10 req/min por cuenta.
+# Si nos exceden → 429 "too-many.requests". Implementamos cooldown agresivo.
+_SESSION_MIN_INTERVAL_SEC = 30.0  # Entre logins del mismo broker: mínimo 30s
+_SESSION_TTL_SEC = 600.0          # Reutilizar sesión hasta 10 min (CST token dura ~10min)
 
 # Mapeo de timeframes internos a resoluciones Capital.com
 _TIMEFRAME_MAP = {
@@ -89,6 +96,18 @@ class CapitalBroker(BrokerInterface):
         self._security_token: str = ""
         self._authenticated = False
 
+        # Control de concurrencia + rate limit de /session
+        # Sin esto, múltiples corrutinas golpean /session al mismo tiempo
+        # → Capital.com responde 429 "too-many.requests" y banea.
+        self._auth_lock = asyncio.Lock()
+        self._last_auth_at: float = 0.0  # time.monotonic() del último login exitoso
+        self._last_auth_attempt_at: float = 0.0  # incluye intentos fallidos
+
+        # Cache de markets (min_size, step, límites SL/TP) para pre-validar
+        # órdenes y EVITAR 400 "error.invalid.size.minvalue" etc.
+        self._market_cache: dict = {}  # epic → {min_size, step, ...}
+        self._market_cache_at: dict = {}  # epic → monotonic timestamp
+
         log.info(
             "Capital.com broker inicializado: env=%s, identifier=%s",
             environment,
@@ -98,40 +117,83 @@ class CapitalBroker(BrokerInterface):
     # ── Autenticación ────────────────────────────────────────
 
     async def _authenticate(self) -> None:
-        """Crear sesión con Capital.com — obtener CST + Security Token."""
-        try:
-            response = await self._client.post(
-                "/api/v1/session",
-                json={
-                    "identifier": self._identifier,
-                    "password": self._password,
-                    "encryptedPassword": False,
-                },
-            )
-            response.raise_for_status()
+        """Crear sesión con Capital.com — obtener CST + Security Token.
 
-            self._cst = response.headers.get("CST", "")
-            self._security_token = response.headers.get("X-SECURITY-TOKEN", "")
-            self._authenticated = True
+        Protegido por self._auth_lock: solo 1 login concurrente.
+        Respeta cooldown _SESSION_MIN_INTERVAL_SEC entre intentos.
+        """
+        async with self._auth_lock:
+            # Doble-check: otra corrutina pudo haber autenticado mientras esperábamos el lock
+            now = time.monotonic()
+            if self._authenticated and (now - self._last_auth_at) < _SESSION_TTL_SEC:
+                return
 
-            # Actualizar headers del cliente con los tokens
-            self._client.headers["CST"] = self._cst
-            self._client.headers["X-SECURITY-TOKEN"] = self._security_token
+            # Cooldown: evitar 429 en /session
+            elapsed_since_attempt = now - self._last_auth_attempt_at
+            if elapsed_since_attempt < _SESSION_MIN_INTERVAL_SEC:
+                wait = _SESSION_MIN_INTERVAL_SEC - elapsed_since_attempt
+                log.info(
+                    "Auth cooldown: esperando %.1fs antes de reintentar /session",
+                    wait,
+                )
+                await asyncio.sleep(wait)
 
-            log.info("Capital.com autenticado exitosamente")
-        except httpx.HTTPStatusError as e:
-            log.error("Capital.com auth error: %s — %s", e.response.status_code, e.response.text)
-            self._authenticated = False
-            raise
-        except httpx.RequestError as e:
-            log.error("Capital.com connection error: %s", e)
-            self._authenticated = False
-            raise
+            self._last_auth_attempt_at = time.monotonic()
+
+            try:
+                response = await self._client.post(
+                    "/api/v1/session",
+                    json={
+                        "identifier": self._identifier,
+                        "password": self._password,
+                        "encryptedPassword": False,
+                    },
+                )
+                # 429: backoff agresivo antes de raise
+                if response.status_code == 429:
+                    log.warning(
+                        "Capital.com /session 429 — backoff 60s",
+                    )
+                    # Marcar el último intento para que el cooldown tenga efecto
+                    self._authenticated = False
+                    await asyncio.sleep(60.0)
+                    response.raise_for_status()  # propagar para que el caller decida
+
+                response.raise_for_status()
+
+                self._cst = response.headers.get("CST", "")
+                self._security_token = response.headers.get("X-SECURITY-TOKEN", "")
+                self._authenticated = True
+                self._last_auth_at = time.monotonic()
+
+                # Actualizar headers del cliente con los tokens
+                self._client.headers["CST"] = self._cst
+                self._client.headers["X-SECURITY-TOKEN"] = self._security_token
+
+                log.info("Capital.com autenticado exitosamente")
+            except httpx.HTTPStatusError as e:
+                log.error(
+                    "Capital.com auth error: %s — %s",
+                    e.response.status_code, e.response.text,
+                )
+                self._authenticated = False
+                raise
+            except httpx.RequestError as e:
+                log.error("Capital.com connection error: %s", e)
+                self._authenticated = False
+                raise
 
     async def _ensure_session(self) -> None:
-        """Asegurar que tenemos una sesión válida."""
-        if not self._authenticated:
-            await self._authenticate()
+        """Asegurar que tenemos una sesión válida, REUTILIZANDO si está fresca."""
+        now = time.monotonic()
+        session_age = now - self._last_auth_at
+
+        # Si tenemos sesión activa Y fresca (< TTL) → reusar sin tocar /session
+        if self._authenticated and session_age < _SESSION_TTL_SEC:
+            return
+
+        # Sesión inexistente o caducada → autenticar (con lock + cooldown)
+        await self._authenticate()
 
     async def _request(
         self,
@@ -139,8 +201,15 @@ class CapitalBroker(BrokerInterface):
         path: str,
         json: dict | None = None,
         params: dict | None = None,
+        _retry_count: int = 0,
     ) -> dict:
-        """Ejecutar request HTTP autenticado contra Capital.com."""
+        """Ejecutar request HTTP autenticado contra Capital.com.
+
+        Retry policy:
+        - 401 (unauthorized): re-auth 1 vez y reintentar
+        - 429 (too-many-requests): backoff exponencial (1s, 2s, 4s, 8s) hasta 3 retries
+        - Otros errores: raise inmediato
+        """
         await self._ensure_session()
 
         try:
@@ -148,13 +217,27 @@ class CapitalBroker(BrokerInterface):
                 method, path, json=json, params=params
             )
 
-            # Si el token expiró, re-autenticar e intentar de nuevo
-            if response.status_code == 401:
+            # 401: token expirado — re-auth 1 vez
+            if response.status_code == 401 and _retry_count == 0:
                 log.info("Sesión expirada, re-autenticando...")
                 self._authenticated = False
                 await self._authenticate()
-                response = await self._client.request(
-                    method, path, json=json, params=params
+                return await self._request(
+                    method, path, json=json, params=params,
+                    _retry_count=_retry_count + 1,
+                )
+
+            # 429: rate limit — backoff exponencial
+            if response.status_code == 429 and _retry_count < 3:
+                backoff = 2 ** _retry_count  # 1s, 2s, 4s
+                log.warning(
+                    "429 rate limit en %s %s — backoff %ds (retry %d/3)",
+                    method, path, backoff, _retry_count + 1,
+                )
+                await asyncio.sleep(backoff)
+                return await self._request(
+                    method, path, json=json, params=params,
+                    _retry_count=_retry_count + 1,
                 )
 
             response.raise_for_status()
@@ -340,6 +423,46 @@ class CapitalBroker(BrokerInterface):
 
     # ── Órdenes ─────────────────────────────────────────────
 
+    async def _get_market_details(self, epic: str) -> dict:
+        """Obtiene y cachea detalles del mercado (min_size, step, precio actual, límites).
+
+        Permite pre-validar órdenes antes de POST para evitar rejects 400.
+        Cache TTL: 5 min — los límites cambian raramente.
+        """
+        now = time.monotonic()
+        cached_at = self._market_cache_at.get(epic, 0)
+        if epic in self._market_cache and (now - cached_at) < 300:
+            return self._market_cache[epic]
+
+        try:
+            data = await self._request("GET", f"/api/v1/markets/{epic}")
+            dealing_rules = data.get("dealingRules", {})
+            snapshot = data.get("snapshot", {})
+
+            # min_deal_size: mínimo contratos/lots que acepta
+            min_size_rule = dealing_rules.get("minDealSize", {})
+            max_stop_rule = dealing_rules.get("maxStopOrLimitDistance", {})
+            min_stop_rule = dealing_rules.get("minStopOrLimitDistance", {})
+
+            details = {
+                "min_size": float(min_size_rule.get("value", 0.01)),
+                "min_size_unit": min_size_rule.get("unit", ""),
+                "max_stop_distance": float(max_stop_rule.get("value", 0)) if max_stop_rule else 0,
+                "max_stop_unit": max_stop_rule.get("unit", "") if max_stop_rule else "",
+                "min_stop_distance": float(min_stop_rule.get("value", 0)) if min_stop_rule else 0,
+                "min_stop_unit": min_stop_rule.get("unit", "") if min_stop_rule else "",
+                "bid": float(snapshot.get("bid", 0)),
+                "offer": float(snapshot.get("offer", 0)),
+                "market_status": snapshot.get("marketStatus", "TRADEABLE"),
+            }
+            self._market_cache[epic] = details
+            self._market_cache_at[epic] = now
+            return details
+        except Exception as e:
+            log.warning("No se pudo obtener market details para %s: %s", epic, e)
+            # Fallback: permitir la orden, el broker la rechazará si falla
+            return {"min_size": 0, "bid": 0, "offer": 0, "market_status": "TRADEABLE"}
+
     async def place_market_order(
         self,
         instrument: str,
@@ -351,6 +474,88 @@ class CapitalBroker(BrokerInterface):
         direction = "BUY" if units > 0 else "SELL"
         size = abs(units)
 
+        # ── PRE-VALIDACIÓN: evitar rejects 400 que Capital.com monitorea ──
+        try:
+            market = await self._get_market_details(epic)
+
+            # Check 1: mercado tradeable
+            if market.get("market_status") not in ("TRADEABLE", ""):
+                log.warning(
+                    "Skip orden %s: market_status=%s",
+                    epic, market.get("market_status"),
+                )
+                return OrderResult(
+                    success=False,
+                    instrument=instrument,
+                    error=f"market_not_tradeable: {market.get('market_status')}",
+                )
+
+            # Check 2: size >= min_deal_size
+            min_size = market.get("min_size", 0)
+            if min_size > 0 and size < min_size:
+                log.warning(
+                    "Skip orden %s: size=%.4f < min_size=%.4f (evita 400 invalid.size.minvalue)",
+                    epic, size, min_size,
+                )
+                return OrderResult(
+                    success=False,
+                    instrument=instrument,
+                    error=f"size_below_minimum: {size:.4f} < {min_size:.4f}",
+                )
+
+            # Check 3: SL/TP del lado correcto
+            # BUY: SL debe ser < precio, TP debe ser > precio
+            # SELL: SL debe ser > precio, TP debe ser < precio
+            bid = market.get("bid", 0)
+            offer = market.get("offer", 0)
+            ref_price = offer if direction == "BUY" else bid
+            if ref_price > 0:
+                if direction == "BUY":
+                    if stop_loss is not None and stop_loss >= ref_price:
+                        log.warning(
+                            "Skip orden BUY %s: SL=%.5f >= precio=%.5f (invalid side)",
+                            epic, stop_loss, ref_price,
+                        )
+                        return OrderResult(
+                            success=False,
+                            instrument=instrument,
+                            error=f"stop_loss_wrong_side: SL={stop_loss} >= price={ref_price}",
+                        )
+                    if take_profit is not None and take_profit <= ref_price:
+                        log.warning(
+                            "Skip orden BUY %s: TP=%.5f <= precio=%.5f (invalid side)",
+                            epic, take_profit, ref_price,
+                        )
+                        return OrderResult(
+                            success=False,
+                            instrument=instrument,
+                            error=f"take_profit_wrong_side: TP={take_profit} <= price={ref_price}",
+                        )
+                else:  # SELL
+                    if stop_loss is not None and stop_loss <= ref_price:
+                        log.warning(
+                            "Skip orden SELL %s: SL=%.5f <= precio=%.5f (invalid side)",
+                            epic, stop_loss, ref_price,
+                        )
+                        return OrderResult(
+                            success=False,
+                            instrument=instrument,
+                            error=f"stop_loss_wrong_side: SL={stop_loss} <= price={ref_price}",
+                        )
+                    if take_profit is not None and take_profit >= ref_price:
+                        log.warning(
+                            "Skip orden SELL %s: TP=%.5f >= precio=%.5f (invalid side)",
+                            epic, take_profit, ref_price,
+                        )
+                        return OrderResult(
+                            success=False,
+                            instrument=instrument,
+                            error=f"take_profit_wrong_side: TP={take_profit} >= price={ref_price}",
+                        )
+        except Exception:
+            log.exception("Error en pre-validación %s (continuando, broker validará)", epic)
+
+        # ── Envío de la orden ──────────────────────────────────
         order_body: dict = {
             "epic": epic,
             "direction": direction,
