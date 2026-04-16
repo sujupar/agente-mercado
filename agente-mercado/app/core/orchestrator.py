@@ -44,7 +44,7 @@ from app.signals.momentum_breakout.signal_engine import MomentumBreakoutGenerato
 from app.signals.pullback_m5.signal_engine import PullbackEMA20M5Generator
 from app.signals.rsi_ema.signal_engine import RSIEma20Generator
 from app.signals.session_breakout.signal_engine import SessionBreakoutGenerator
-from app.strategies.registry import STRATEGIES
+from app.strategies.registry import STRATEGIES, STRATEGIES_ENABLED_IN_LIVE
 
 log = logging.getLogger(__name__)
 
@@ -262,24 +262,22 @@ class ForexOrchestrator:
                             self._entry_candle_cache["H4"] = candle_cache[tf]
                             self._entry_candle_cache_at = now
 
-                # Política LIVE: solo estrategias validadas (STRATEGIES_ENABLED_IN_LIVE)
-                # ejecutan trades con dinero real. En DEMO todas operan normalmente
-                # como laboratorio. Las no-whitelisted en LIVE hacen skip temprano.
+                # Arquitectura trades espejo (16 abr 2026):
+                # - DEMO es el "maestro" que genera señales para TODAS las estrategias
+                # - LIVE NO genera señales propias. Solo gestiona posiciones abiertas
+                #   que el maestro DEMO disparó vía mirror. Esto garantiza que LIVE
+                #   ejecute EXACTAMENTE los mismos trades de S1 DEMO (con sizing
+                #   propio basado en balance LIVE).
                 is_live = self._environment == "LIVE"
-                from app.strategies.registry import STRATEGIES_ENABLED_IN_LIVE
+                if is_live:
+                    # LIVE no genera señales — sale del entry_cycle sin ejecutar strategy loop
+                    log.debug("entry_cycle LIVE: skip (señales se disparan desde mirror DEMO→LIVE)")
+                    return
 
-                # Buscar entradas para cada estrategia
+                # Buscar entradas para cada estrategia (solo DEMO llega aquí)
                 total_trades = 0
                 for strategy_id, config in STRATEGIES.items():
                     if not config.enabled:
-                        continue
-
-                    # Gate LIVE: skip estrategias no validadas en cuenta real
-                    if is_live and strategy_id not in STRATEGIES_ENABLED_IN_LIVE:
-                        log.debug(
-                            "[%s] Skip en LIVE: no está en STRATEGIES_ENABLED_IN_LIVE",
-                            strategy_id,
-                        )
                         continue
 
                     # Check daily trade limit
@@ -711,6 +709,89 @@ class ForexOrchestrator:
             )
             return False
 
+        # 5b. MIRROR A LIVE: si estamos en DEMO y es S1 (única validada para LIVE),
+        # replicar la misma orden en la cuenta real con sizing basado en balance LIVE.
+        # Esto hace que LIVE ejecute EXACTAMENTE los mismos trades que S1 DEMO.
+        live_order_result = None
+        live_units = 0
+        if (
+            self._environment == "DEMO"
+            and strategy_id in STRATEGIES_ENABLED_IN_LIVE
+            and settings.capital_api_key_live
+            and settings.capital_identifier_live
+        ):
+            try:
+                from app.core.scheduler import get_broker as _get_broker_singleton
+                live_broker = _get_broker_singleton("LIVE")
+                if live_broker is not None:
+                    # Sizing con balance LIVE real + min_units como fallback
+                    try:
+                        live_account = await live_broker.get_account()
+                        live_balance = live_account.balance
+                    except Exception:
+                        log.exception("Mirror LIVE: error obteniendo balance LIVE — skip")
+                        live_balance = 0
+
+                    if live_balance > 0:
+                        # Calcular size con balance LIVE; si queda muy chico, forzar min_units
+                        # (el usuario eligió "size reducido automáticamente").
+                        live_units_calc = calculate_position_size(
+                            instrument=signal.instrument,
+                            account_balance=live_balance,
+                            risk_pct=strategy_config.risk_per_trade_pct,
+                            stop_distance_price=stop_distance,
+                            current_price=price.mid,
+                            max_risk_multiplier=5.0,  # Permitir hasta 5% risk si
+                                                      # min_units del broker lo requiere
+                        )
+
+                        # Fallback absoluto: si calculate retornó 0 por riesgo excesivo,
+                        # usar min_units del instrumento. Usuario eligió "size reducido auto".
+                        if live_units_calc <= 0:
+                            from app.forex.instruments import INSTRUMENT_CONFIG, _normalize_instrument
+                            cfg = INSTRUMENT_CONFIG.get(_normalize_instrument(signal.instrument), {})
+                            live_units_calc = cfg.get("min_units", 1)
+
+                        if signal.direction == "SHORT":
+                            live_units = -live_units_calc
+                        else:
+                            live_units = live_units_calc
+
+                        try:
+                            live_order_result = await live_broker.place_market_order(
+                                instrument=signal.instrument,
+                                units=live_units,
+                                stop_loss=signal.stop_price,
+                                take_profit=signal.tp1_price,
+                            )
+                            if live_order_result.success:
+                                log.info(
+                                    "[%s] MIRROR LIVE: orden ejecutada — %s units=%d deal=%s",
+                                    strategy_id, signal.instrument, live_units,
+                                    live_order_result.trade_id,
+                                )
+                            else:
+                                log.warning(
+                                    "[%s] MIRROR LIVE: orden rechazada — %s",
+                                    strategy_id, live_order_result.error,
+                                )
+                                live_order_result = None
+                        except Exception:
+                            log.exception("[%s] MIRROR LIVE: excepción en place_market_order", strategy_id)
+                            live_order_result = None
+                    else:
+                        log.warning(
+                            "[%s] MIRROR LIVE: balance LIVE=$0 — no se puede replicar",
+                            strategy_id,
+                        )
+                else:
+                    log.debug(
+                        "[%s] MIRROR LIVE: broker LIVE no disponible (¿sin credenciales?)",
+                        strategy_id,
+                    )
+            except Exception:
+                log.exception("[%s] MIRROR LIVE: error inesperado (DEMO sigue adelante)", strategy_id)
+
         # 6. Registrar señal en DB
         db_signal = Signal(
             strategy_id=strategy_id,
@@ -810,7 +891,83 @@ class ForexOrchestrator:
         session.add(trade)
         await session.flush()
 
-        # 8. Bitácora
+        # 8b. Si el mirror LIVE tuvo éxito, persistir también el Trade LIVE
+        # con environment="LIVE" para que aparezca en el panel de la cuenta real.
+        if live_order_result is not None and live_order_result.success:
+            live_entry = live_order_result.fill_price or signal.entry_price
+            live_trade = Trade(
+                strategy_id=strategy_id,
+                environment="LIVE",
+                signal_id=db_signal.id,  # misma señal que DEMO
+                market_id=f"oanda:{signal.instrument}",
+                symbol=signal.instrument,
+                instrument=signal.instrument,
+                direction="BUY" if signal.direction == "LONG" else "SELL",
+                size_usd=calculate_notional_usd(signal.instrument, live_units, live_entry),
+                quantity=abs(live_units),
+                entry_price=live_entry,
+                take_profit_price=signal.tp1_price,
+                stop_loss_price=signal.stop_price,
+                initial_stop_price=signal.stop_price,
+                original_size_usd=calculate_notional_usd(signal.instrument, live_units, live_entry),
+                pattern_name=signal.pattern_type,
+                broker_trade_id=live_order_result.trade_id,
+                risk_reward_ratio=signal.risk_reward_ratio,
+                stop_distance_pips=stop_distance,
+                timeframe_entry=signal.entry_timeframe,
+                context_timeframe="H4",
+                market_state_json=signal.market_state_h1.to_dict() if signal.market_state_h1 else None,
+                status="OPEN",
+                is_simulation=False,
+                entry_ema20_distance_atr=ema20_dist_atr,
+                entry_sma200_distance_atr=sma200_dist_atr,
+                entry_candle_body_pct=candle_body_pct,
+                entry_candle_upper_wick_pct=candle_upper_wick_pct,
+                entry_candle_lower_wick_pct=candle_lower_wick_pct,
+                entry_atr14=entry_atr14,
+                entry_retrace_pct=entry_retrace_pct,
+            )
+            session.add(live_trade)
+            await session.flush()
+
+            # Bitácora LIVE con mismo reasoning
+            live_bitacora = Bitacora(
+                trade_id=live_trade.id,
+                strategy_id=strategy_id,
+                environment="LIVE",
+                symbol=signal.instrument,
+                direction=live_trade.direction,
+                entry_reasoning=(
+                    f"MIRROR de DEMO trade #{trade.id}. "
+                    f"Patrón {signal.pattern_type} en pullback a EMA20. "
+                    f"R:R={signal.risk_reward_ratio:.1f}. "
+                    f"Tendencia H1: {signal.market_state_h1.trend_state if signal.market_state_h1 else 'N/A'}."
+                ),
+                market_context=signal.market_state_h1.to_dict() if signal.market_state_h1 else None,
+                entry_price=live_trade.entry_price,
+                entry_time=datetime.now(timezone.utc),
+            )
+            session.add(live_bitacora)
+
+            # Actualizar AgentState LIVE
+            live_state_result = await session.execute(
+                select(AgentState).where(
+                    AgentState.strategy_id == strategy_id,
+                    AgentState.environment == "LIVE",
+                )
+            )
+            live_state = live_state_result.scalar_one_or_none()
+            if live_state is not None:
+                live_state.positions_open += 1
+                live_state.trades_executed_total += 1
+                live_state.last_trade_at = datetime.now(timezone.utc)
+
+            log.info(
+                "[%s] ✓ MIRROR LIVE persistido: trade_id=%d live_units=%d",
+                strategy_id, live_trade.id, live_units,
+            )
+
+        # 8. Bitácora (DEMO)
         bitacora = Bitacora(
             trade_id=trade.id,
             strategy_id=strategy_id,
