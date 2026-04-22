@@ -642,6 +642,23 @@ class ForexOrchestrator:
         # 4. Obtener AgentState para tracking + stepped compound
         state = await self._ensure_state(session, strategy_id)
 
+        # 4b. Circuit breaker por drawdown (regla inviolable CLAUDE.md: 10%).
+        # Solo aplica cuando hay peak registrado. En SIMULATION sigue operando
+        # (sirve para aprender), pero en LIVE o DEMO con balance real bloquea.
+        peak = state.peak_capital_usd or 0.0
+        if peak > 0 and state.mode != "SIMULATION":
+            equity = account.balance + (account.unrealized_pnl or 0.0)
+            drawdown_pct = (peak - equity) / peak if equity < peak else 0.0
+            if drawdown_pct >= settings.max_drawdown_pct:
+                log.warning(
+                    "[%s] Drawdown %.1f%% >= limite %.1f%% — orden BLOQUEADA [%s] "
+                    "(equity=$%.2f peak=$%.2f)",
+                    strategy_id, drawdown_pct * 100,
+                    settings.max_drawdown_pct * 100, self._environment,
+                    equity, peak,
+                )
+                return False
+
         # 5. Calcular position size
         # Estrategias con capital propio (≤$100): usan su capital, sin stepped compound
         # S1/S2 con capital del broker: usan stepped compound
@@ -714,12 +731,30 @@ class ForexOrchestrator:
         # Esto hace que LIVE ejecute EXACTAMENTE los mismos trades que S1 DEMO.
         live_order_result = None
         live_units = 0
-        if (
+        mirror_eligible = (
             self._environment == "DEMO"
             and strategy_id in STRATEGIES_ENABLED_IN_LIVE
             and settings.capital_api_key_live
             and settings.capital_identifier_live
-        ):
+        )
+        if mirror_eligible:
+            # Dedup: si LIVE ya tiene un trade abierto para este strategy+symbol,
+            # no enviamos mirror (evita doble posición en retry / race del scheduler).
+            live_dup_result = await session.execute(
+                select(func.count(Trade.id)).where(
+                    Trade.strategy_id == strategy_id,
+                    Trade.environment == "LIVE",
+                    Trade.status == "OPEN",
+                    Trade.symbol == signal.instrument,
+                )
+            )
+            if (live_dup_result.scalar() or 0) > 0:
+                log.info(
+                    "[%s] MIRROR LIVE skip: ya hay %s abierto en LIVE (dedup)",
+                    strategy_id, signal.instrument,
+                )
+                mirror_eligible = False
+        if mirror_eligible:
             try:
                 from app.core.scheduler import get_broker as _get_broker_singleton
                 live_broker = _get_broker_singleton("LIVE")

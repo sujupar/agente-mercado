@@ -19,6 +19,20 @@ log = logging.getLogger(__name__)
 _SESSION_MIN_INTERVAL_SEC = 30.0  # Entre logins del mismo broker: mínimo 30s
 _SESSION_TTL_SEC = 600.0          # Reutilizar sesión hasta 10 min (CST token dura ~10min)
 
+# Locks de autenticación globales por identifier (cuenta Capital.com).
+# Capital.com rate-limit /session por cuenta: si DEMO y LIVE comparten identifier
+# (o dos instancias apuntan a la misma cuenta), el lock por instancia no basta.
+# Compartir un lock module-level por identifier evita requests paralelos a /session.
+_GLOBAL_AUTH_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _get_global_auth_lock(identifier: str) -> asyncio.Lock:
+    lock = _GLOBAL_AUTH_LOCKS.get(identifier)
+    if lock is None:
+        lock = asyncio.Lock()
+        _GLOBAL_AUTH_LOCKS[identifier] = lock
+    return lock
+
 # Mapeo de timeframes internos a resoluciones Capital.com
 _TIMEFRAME_MAP = {
     "M1": "MINUTE",
@@ -99,7 +113,9 @@ class CapitalBroker(BrokerInterface):
         # Control de concurrencia + rate limit de /session
         # Sin esto, múltiples corrutinas golpean /session al mismo tiempo
         # → Capital.com responde 429 "too-many.requests" y banea.
-        self._auth_lock = asyncio.Lock()
+        # El lock es GLOBAL por identifier: DEMO y LIVE con la misma cuenta
+        # (o dos instancias del mismo env) comparten el lock y no se pisan.
+        self._auth_lock = _get_global_auth_lock(identifier)
         self._last_auth_at: float = 0.0  # time.monotonic() del último login exitoso
         self._last_auth_attempt_at: float = 0.0  # incluye intentos fallidos
 
@@ -490,18 +506,41 @@ class CapitalBroker(BrokerInterface):
                     error=f"market_not_tradeable: {market.get('market_status')}",
                 )
 
-            # Check 2: size >= min_deal_size
+            # Check 2: size >= min_deal_size (unit-aware)
+            # Capital.com reporta `minDealSize.unit` que puede ser:
+            #   - vacío o "" → raw (mismas unidades que mandamos en `size`).
+            #     Evidencia: trades exitosos ~15 abr con size=700 en GBP_USD
+            #     prueban que Capital acepta tamaños "raw" sub-lote.
+            #   - "LOTS" → 1 lot = 100,000 unidades (forex CFD standard).
+            #   - "AMOUNT" → notional USD (size × precio).
+            # Si la unidad es desconocida, NO bloqueamos: mejor que el broker
+            # decida que generar un falso positivo que pare trades válidos.
             min_size = market.get("min_size", 0)
-            if min_size > 0 and size < min_size:
-                log.warning(
-                    "Skip orden %s: size=%.4f < min_size=%.4f (evita 400 invalid.size.minvalue)",
-                    epic, size, min_size,
-                )
-                return OrderResult(
-                    success=False,
-                    instrument=instrument,
-                    error=f"size_below_minimum: {size:.4f} < {min_size:.4f}",
-                )
+            min_size_unit = (market.get("min_size_unit") or "").upper()
+            if min_size > 0:
+                size_comparable = None
+                if min_size_unit == "LOTS":
+                    size_comparable = size / 100_000
+                elif min_size_unit == "AMOUNT":
+                    ref = market.get("offer", 0) or market.get("bid", 0)
+                    if ref > 0:
+                        size_comparable = size * ref
+                elif min_size_unit in ("", "POINTS"):
+                    size_comparable = size
+                # Otras unidades exóticas: size_comparable queda None → no check
+                if size_comparable is not None and size_comparable < min_size:
+                    log.warning(
+                        "Skip orden %s: size=%.4f (comparable=%.4f unit=%s) < min=%.4f",
+                        epic, size, size_comparable, min_size_unit or "RAW", min_size,
+                    )
+                    return OrderResult(
+                        success=False,
+                        instrument=instrument,
+                        error=(
+                            f"size_below_minimum: {size_comparable:.4f} "
+                            f"< {min_size:.4f} ({min_size_unit or 'RAW'})"
+                        ),
+                    )
 
             # Check 3: SL/TP del lado correcto
             # BUY: SL debe ser < precio, TP debe ser > precio
