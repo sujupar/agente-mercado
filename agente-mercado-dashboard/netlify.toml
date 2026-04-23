@@ -2,6 +2,15 @@
   command = "npm run build"
   publish = "dist"
 
+# Backend Railway (URL nueva tras redeploy 23 abr 2026 — la vieja
+# backend-production-ee37 quedó muerta). Si en el futuro el dominio
+# cambia, actualizar acá y re-deployar.
+[context.production.environment]
+  VITE_API_URL = "https://agente-mercado-production.up.railway.app/api/v1"
+
+[context.deploy-preview.environment]
+  VITE_API_URL = "https://agente-mercado-production.up.railway.app/api/v1"
+
 # SPA: redirigir todas las rutas al index.html
 [[redirects]]
   from = "/*"

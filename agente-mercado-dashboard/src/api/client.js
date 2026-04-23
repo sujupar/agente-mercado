@@ -10,8 +10,13 @@
 import axios from 'axios';
 
 // En desarrollo: Vite proxy redirige /api a localhost:8000
-// En producción (Netlify): VITE_API_URL apunta al backend en Railway
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/v1';
+// En producción (Netlify): VITE_API_URL apunta al backend en Railway.
+// Fallback hardcoded para prod si la env var no está seteada.
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD
+    ? 'https://agente-mercado-production.up.railway.app/api/v1'
+    : '/api/v1');
 
 // Crear instancia de axios con configuración base
 const apiClient = axios.create({
